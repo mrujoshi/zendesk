@@ -1,0 +1,15 @@
+meta {
+  name: Get Ticket Audit Trail
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/tickets/{{ticketId}}/audit
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}

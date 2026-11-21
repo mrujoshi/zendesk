@@ -1,0 +1,21 @@
+meta {
+  name: Reassign Ticket
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/api/tickets/{{ticketId}}/assign
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "agent_id": 3
+  }
+}
