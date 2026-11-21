@@ -181,5 +181,6 @@ A table would only make sense if admins could create custom statuses from the UI
 - **Where are invalid status moves blocked?** `rules.check_transition`, called by the controller before the Model.
 - **How does round-robin work?** `rules.next_agent`: the next id after the last one, wrapping around.
 - **What if two tickets arrive at once?** Assignment runs in one transaction, so the pointer stays consistent.
+- **What if two agents change the same ticket at once?** Every write endpoint reads the ticket, checks the rule and writes inside one `BEGIN IMMEDIATE` transaction. The second request waits, sees the updated ticket and gets a clear 400 (e.g. "Ticket is already closed") instead of silently overwriting. Tested: two agents closing the same ticket at the same moment → one 200, one 400, one audit row. The escalation job re-checks each ticket under the same lock, so a manual run and the background job never escalate twice.
 - **What if the input is wrong?** Pydantic returns 422 with the field name.
 - **Why is the controller thin?** Rules live in `rules.py` and SQL lives in the Model, so each layer is easy to test and swap.

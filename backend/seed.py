@@ -148,20 +148,25 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
 
     # 5. Generate Exactly 100 Realistic Tickets
     # Distribution of statuses:
-    #   open: ~35, pending: ~25, solved: ~20, closed: ~10, sla_breached: ~5, escalated: ~5
+    #   open: ~40, pending: ~30, solved: ~20, closed: ~10
+    #   The last 10 tickets (5 open + 5 pending) are already escalated. Escalation is the
+    #   is_escalated flag on an open/pending ticket, not a status (see notes.md / constants.py).
     # Distribution of priorities:
     #   urgent: ~12, high: ~22, normal: ~46, low: ~20
     now = datetime.now(timezone.utc)
     ticket_rows = []
+    active_n = 0  # counts open/pending tickets, to choose which few are overdue
+    original_priority = []  # priority before escalation, for the 'escalated' audit row
 
     statuses_pool = (
         ["open"] * 35 +
         ["pending"] * 25 +
         ["solved"] * 20 +
         ["closed"] * 10 +
-        ["sla_breached"] * 5 +
-        ["escalated"] * 5
+        ["open"] * 5 +      # escalated (is_escalated = 1)
+        ["pending"] * 5     # escalated (is_escalated = 1)
     )
+    NEXT_PRIORITY = {"low": "normal", "normal": "high", "high": "urgent", "urgent": "urgent"}
 
     priorities_pool = (
         ["urgent"] * 12 +
@@ -182,23 +187,41 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
         priority = priorities_pool[i]
         client_id = client_ids[i % len(client_ids)]
 
+        is_escalated = 1 if i >= 90 else 0
+        original_priority.append(priority)
+        if is_escalated:
+            # Escalation bumped the priority one level (audit row below records the old one)
+            priority = NEXT_PRIORITY[priority]
+
         # Assign agent: leave ~10 tickets unassigned (agent_id = None) to test Unassigned views
-        if i % 10 == 0 and status in ("open", "pending"):
+        if is_escalated:
+            agent_id = admin_id  # Escalated tickets are moved to the admin
+        elif i % 10 == 0 and status in ("open", "pending"):
             agent_id = None
-        elif status == "escalated":
-            agent_id = admin_id  # Escalated tickets assigned to admin
         else:
             agent_id = agent_ids[i % len(agent_ids)]
 
-        is_escalated = 1 if status in ("escalated", "sla_breached") else 0
+        sla = SLA_HOURS[priority]
 
-        # Create timestamps spread across the last 5 days
-        hours_ago = (100 - i) * 1.2
+        if status in ("open", "pending") and not is_escalated:
+            # Active tickets must still be inside their SLA, otherwise the escalation job
+            # escalates them all within a minute of server start.
+            active_n += 1
+            if active_n % 12 == 0:
+                # ~5 tickets just past their SLA (15-55 min) to show escalation live in the demo
+                hours_ago = sla + 0.25 + (active_n % 5) * 0.1
+            else:
+                # Used 10%-90% of the SLA so far: due_at is still in the future
+                hours_ago = sla * (0.1 + 0.8 * ((i * 37) % 100) / 100)
+        else:
+            # Finished / already-escalated tickets: spread across the last 5 days
+            hours_ago = (100 - i) * 1.2
+
         created_at = (now - timedelta(hours=hours_ago)).isoformat()
-        updated_at = (now - timedelta(hours=max(0.5, hours_ago - 2))).isoformat()
+        updated_at = (now - timedelta(hours=hours_ago - min(2, hours_ago / 2))).isoformat()
 
         # Due date based on priority SLA
-        due_at = (now - timedelta(hours=hours_ago) + timedelta(hours=SLA_HOURS[priority])).isoformat()
+        due_at = (now - timedelta(hours=hours_ago) + timedelta(hours=sla)).isoformat()
 
         # Solved timestamp
         solved_at = updated_at if status in ("solved", "closed") else None
@@ -228,14 +251,14 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
     )
 
     # 6. Fetch created ticket IDs to attach Worksheet, Messages, and Audit rows
-    cursor.execute("SELECT id, client_id, agent_id, status, priority, created_at FROM tickets ORDER BY id ASC;")
+    cursor.execute("SELECT id, client_id, agent_id, status, priority, is_escalated, created_at FROM tickets ORDER BY id ASC;")
     all_tickets = cursor.fetchall()
 
     worksheet_rows = []
     audit_rows = []
     message_rows = []
 
-    for t in all_tickets:
+    for t, orig_pr in zip(all_tickets, original_priority):
         t_id = t["id"]
         c_id = t["client_id"]
         a_id = t["agent_id"]
@@ -251,14 +274,17 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
 
         if a_id:
             # Worksheet entry
-            reason = "escalation" if st == "escalated" else "round_robin"
-            assigned_by = admin_id if st == "escalated" else a_id
+            esc = t["is_escalated"] == 1
+            reason = "escalation" if esc else "round_robin"
+            assigned_by = None if esc else a_id  # system escalation has no human assigner
             worksheet_rows.append((t_id, a_id, assigned_by, reason, st, cr_at))
-            audit_rows.append((t_id, "system", a_id, "assigned", None, str(a_id), cr_at))
+            audit_rows.append((t_id, "system", 0, "assigned", None, str(a_id), cr_at))  # system actor id = 0
 
             # Threaded response if ticket progressed
             if st in ("pending", "solved", "closed"):
-                reply_time = (datetime.fromisoformat(cr_at) + timedelta(minutes=45)).isoformat()
+                # 45 min after creation, but never in the future (recent tickets are only minutes old)
+                reply_time = min(datetime.fromisoformat(cr_at) + timedelta(minutes=45),
+                                 now - timedelta(minutes=1)).isoformat()
                 message_rows.append((t_id, a_id, "agent", "We have investigated and applied the initial configuration patch. Please verify.", "public", reply_time))
                 message_rows.append((t_id, a_id, "agent", "Internal note: verified logs, database latency is back to normal.", "internal", reply_time))
 
@@ -266,8 +292,8 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
                 audit_rows.append((t_id, "agent", a_id, "status_change", "open", "solved", cr_at))
             elif st == "closed":
                 audit_rows.append((t_id, "agent", a_id, "status_change", "solved", "closed", cr_at))
-            elif st == "escalated":
-                audit_rows.append((t_id, "system", admin_id, "escalated", pr, "urgent", cr_at))
+            if esc:
+                audit_rows.append((t_id, "system", 0, "escalated", orig_pr, pr, cr_at))
 
     cursor.executemany(
         "INSERT INTO worksheet (ticket_id, agent_id, assigned_by, reason, status, created_at) VALUES (?, ?, ?, ?, ?, ?);",

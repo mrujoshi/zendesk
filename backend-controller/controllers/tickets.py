@@ -72,10 +72,12 @@ def ticket_detail(ticket_id: int, actor: Actor = Depends(current_actor)):
 @router.patch("/tickets/{ticket_id}/status", summary="Change status (validated transitions)")
 def change_status(ticket_id: int, body: StatusUpdate, actor: Actor = Depends(current_actor)):
     require_staff(actor)
-    t = get_or_404(ticket_id, actor)
     new = body.status.value
-    rules.check_transition(t["status"], new)
+    # Read + check + write inside ONE locked transaction. If two agents act at the same moment,
+    # the second waits, then sees the updated ticket and gets a clear 400 (no lost update).
     with models.transaction():
+        t = get_or_404(ticket_id, actor)
+        rules.check_transition(t["status"], new)
         models.update_status(ticket_id, new)
         models.audit(ticket_id, actor.type, actor.id, "status", t["status"], new)
     return models.get_ticket(ticket_id)
@@ -84,14 +86,14 @@ def change_status(ticket_id: int, body: StatusUpdate, actor: Actor = Depends(cur
 @router.post("/tickets/{ticket_id}/assign", summary="Manual reassign (pointer not moved)")
 def reassign(ticket_id: int, body: AssignRequest, actor: Actor = Depends(current_actor)):
     require_staff(actor)
-    t = get_or_404(ticket_id, actor)
-    if t["status"] == Status.CLOSED:
-        raise RuleError(400, "ticket_closed", "Cannot reassign a closed ticket")
-    if body.agent_id not in models.active_agent_ids():
-        raise RuleError(400, "invalid_agent", "Agent not found or inactive")
-    if t["agent_id"] == body.agent_id:
-        return t
-    with models.transaction():
+    with models.transaction():  # read + check + write under one lock (see change_status)
+        t = get_or_404(ticket_id, actor)
+        if t["status"] == Status.CLOSED:
+            raise RuleError(400, "ticket_closed", "Cannot reassign a closed ticket")
+        if body.agent_id not in models.active_agent_ids():
+            raise RuleError(400, "invalid_agent", "Agent not found or inactive")
+        if t["agent_id"] == body.agent_id:
+            return t
         models.assign(ticket_id, body.agent_id, assigned_by=actor.id, reason="manual_reassign")
         models.audit(ticket_id, actor.type, actor.id, "assigned",
                      str(t["agent_id"]) if t["agent_id"] else None, str(body.agent_id))
@@ -100,14 +102,14 @@ def reassign(ticket_id: int, body: AssignRequest, actor: Actor = Depends(current
 
 @router.post("/tickets/{ticket_id}/messages", status_code=201, summary="Add message (auto status)")
 def add_message(ticket_id: int, body: MessageCreate, actor: Actor = Depends(current_actor)):
-    t = get_or_404(ticket_id, actor)
     internal = body.visibility == Visibility.INTERNAL
     if internal:
         require_staff(actor)
     author_type = "client" if actor.type == "client" else "agent"
-    # Checked even for internal notes: nobody writes on a closed ticket
-    new_status = rules.status_after_reply(t["status"], author_type)
-    with models.transaction():
+    with models.transaction():  # read + check + write under one lock (see change_status)
+        t = get_or_404(ticket_id, actor)
+        # Checked even for internal notes: nobody writes on a closed ticket
+        new_status = rules.status_after_reply(t["status"], author_type)
         msg = models.add_message(ticket_id, author_type, actor.id, body.text, body.visibility.value)
         if not internal and new_status != t["status"]:
             models.update_status(ticket_id, new_status)
@@ -131,10 +133,15 @@ def audit_trail(ticket_id: int, actor: Actor = Depends(current_actor)):
 def escalate_overdue() -> list[int]:
     """Escalation job: raise priority, flag, move to an admin, audit. Returns escalated ids."""
     done = []
-    for t in models.overdue_tickets(rules.now()):
-        new_p = rules.escalated_priority(t["priority"])
-        admin = models.admin_id()
+    for candidate in models.overdue_tickets(rules.now()):
         with models.transaction():
+            # Re-read under the lock: the background job and a manual run (or an agent solving
+            # the ticket) may race; skip if it's no longer an un-escalated active ticket.
+            t = models.get_ticket(candidate["id"])
+            if t["is_escalated"] or t["status"] not in ("open", "pending"):
+                continue
+            new_p = rules.escalated_priority(t["priority"])
+            admin = models.admin_id()
             models.escalate(t["id"], new_p)
             models.audit(t["id"], SYSTEM.type, SYSTEM.id, "escalated", t["priority"], new_p)
             if admin is not None and admin != t["agent_id"]:
