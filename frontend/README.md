@@ -16,7 +16,16 @@ npm install
 npm run dev        # open http://localhost:5173
 ```
 
-Demo logins (password `password123`): `asha@demo.com` (admin), `priya@demo.com` / `rahul@demo.com` (agents) log in as **Agent / Admin**. `ravi@demo.com` logs in as **Client**. New clients can sign up from the login page.
+Demo logins (password `password123`, from `backend/seed.py`): `asha@demo.com` (admin), `priya@demo.com` / `rahul@demo.com` (agents) log in as **Agent / Admin**. `support@acme.com` (Acme Corp) logs in as **Client**. On the login page, one click on a demo card logs you in. New clients can sign up there too.
+
+## UI features
+
+- Inter font, light and dark mode (follows the system, toggle with the moon/sun button or **T**), works at phone width
+- Clickable status stepper (Open → Pending → Solved → Closed): only the moves the API allows are clickable
+- Chat-style thread with avatars, Public reply / Internal note tabs, **⌘/Ctrl+Enter** to send
+- Live SLA chips (grey → amber under 2 h → red when overdue), list refreshes every 10 s with a "Live" indicator
+- Toast messages for every action and error, loading skeletons, empty states, search highlighting
+- Keyboard shortcuts (press **?**): **J/K** move between tickets, **/** search, **N** new ticket, **R** reply, **1–3** switch page, **Esc** close
 
 ## Files
 
@@ -30,6 +39,10 @@ Demo logins (password `password123`): `asha@demo.com` (admin), `priya@demo.com` 
 | `src/NewTicketModal.jsx` | Create ticket (clients only) |
 | `src/Report.jsx` | Daily report (`/reports/daily?day=`) |
 | `src/AdminPanel.jsx` | Create agents/admins (`POST /api/agents`), list agents and clients |
+| `src/ui.jsx` | Shared pieces: icons, avatar, status/priority badges, SLA chip, toasts, modal, keyboard shortcuts |
+| `src/styles.css` | Design tokens (colours for light/dark mode, spacing, radius) and all styles |
+
+Seeded data also contains the statuses `escalated` and `sla_breached`, which aren't part of the lifecycle. The UI shows them with their own colour, but the API can't move them to another status.
 
 ## What each role sees
 
