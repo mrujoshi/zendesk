@@ -20,8 +20,18 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _status(value: str) -> Status:
+    """Guard: a status stored in the DB that isn't in our lifecycle (e.g. 'escalated' from old seed
+    data) returns a clear 400 instead of crashing with a 500. Escalation is the is_escalated flag."""
+    try:
+        return Status(value)
+    except ValueError:
+        raise RuleError(400, "unknown_status",
+                        f"Ticket has unsupported status '{value}'; expected open, pending, solved or closed")
+
+
 def check_transition(old: str, new: str) -> None:
-    old_s, new_s = Status(old), Status(new)
+    old_s, new_s = _status(old), _status(new)
     if old_s == new_s:
         raise RuleError(400, "no_change", f"Ticket is already {old}")
     if new_s not in ALLOWED_TRANSITIONS[old_s]:
@@ -30,7 +40,7 @@ def check_transition(old: str, new: str) -> None:
 
 def status_after_reply(current: str, author_type: str) -> str:
     """Agent reply -> pending (waiting on client). Client reply -> open (agent's turn)."""
-    if Status(current) == Status.CLOSED:
+    if _status(current) == Status.CLOSED:
         raise RuleError(400, "ticket_closed", "Ticket is closed; please open a new one")
     return (Status.PENDING if author_type == "agent" else Status.OPEN).value
 
