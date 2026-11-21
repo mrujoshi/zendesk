@@ -15,8 +15,9 @@ Run the backend: `.venv/bin/uvicorn main:app --reload`, then open http://127.0.0
 | `revoke_session(token_hash)` | set `revoked_at` |
 | `get_client(id)` / `get_user(id)` / `get_agent(id)` | dict or None (user has `client_id`, `client_name`; agent has `role`, `is_active`) |
 | `email_exists(kind, email)` | bool (`kind` = "user" / "agent" / "client") |
-| `list_agents()` / `list_clients()` / `list_users(client_id=None)` | list of dicts |
-| `active_agent_ids()` | ids of active agents with role 'agent' (round-robin pool) |
+| `list_agents()` / `list_clients(ids=None)` / `list_users(client_id=None)` | list of dicts (clients include `user_count`, `ticket_count`) |
+| `active_agent_ids(client_id=None)` | active agents with role 'agent'; with client_id only those linked to it |
+| `linked_client_ids(agent_id)` / `linked_agents(client_id)` / `set_agent_clients(agent_id, ids)` / `existing_client_ids(ids)` | agent ↔ client access (`agent_clients` table) |
 | `admin_id()` | id of an active admin, or None |
 | `get_last_assigned()` / `set_last_assigned(id)` | settings table, key `last_assigned_agent_id` |
 | `create_ticket(client_id, user_id, title, description, priority, due_at)` | ticket dict |
@@ -29,6 +30,7 @@ Run the backend: `.venv/bin/uvicorn main:app --reload`, then open http://127.0.0
 | `audit(ticket_id, actor_type, actor_id, action, old_value, new_value)` | insert only |
 | `get_audit(ticket_id)` | list, oldest first |
 | `overdue_tickets(now_iso)` | open/pending, not escalated, `due_at < now_iso` |
+| `update_priority(id, priority, due_at)` | sets priority + new SLA deadline |
 | `escalate(id, new_priority)` | sets priority, `is_escalated = 1` |
 | `daily_report(day)` | `{date, created, solved, open, escalated, open_per_agent}` |
 
@@ -57,11 +59,15 @@ Only admins create clients and users (no open sign-up, otherwise anyone could jo
 | POST | `/api/users` `{client_id, name, email, password, category}` | admin |
 | GET | `/api/users?client_id=` (with `client_name`) | staff |
 | POST | `/api/agents` | admin |
-| GET | `/api/agents` | staff |
+| GET | `/api/agents`, `/api/clients` | staff (agents get only their linked clients) |
+| GET | `/api/agents/{id}/clients` | admin, or that agent → `{agent_id, client_ids}` |
+| PUT | `/api/agents/{id}/clients` `{client_ids: [..]}` | admin; replaces the agent's full list |
+| GET | `/api/clients/{id}/agents` | staff → agents linked to that client (use for the reassign dropdown) |
 | POST | `/api/tickets` `{title, description, priority}` | user (ticket belongs to their client) |
-| GET | `/api/tickets?status=&priority=&escalated=&agent_id=&limit=&offset=` | all (a user sees only their client's tickets) |
+| GET | `/api/tickets?status=&priority=&escalated=&agent_id=&limit=&offset=` | all (user: own client's tickets; agent: linked clients; admin: all) |
 | GET | `/api/tickets/{id}` (includes `messages`) | all |
 | PATCH | `/api/tickets/{id}/status` `{status}` | staff |
+| PATCH | `/api/tickets/{id}/priority` `{priority}` | staff (open/pending tickets only; SLA deadline recalculated from creation; audit action `priority`) |
 | POST | `/api/tickets/{id}/assign` `{agent_id}` | staff |
 | POST | `/api/tickets/{id}/messages` `{text, visibility}` | all (internal = staff only) |
 | GET | `/api/tickets/{id}/audit` | staff |

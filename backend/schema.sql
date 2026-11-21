@@ -1,5 +1,6 @@
 -- Mini-Zendesk SQLite Relational Schema
--- Supports separate User, Client, Agent tables with encrypted passwords,
+-- Clients (companies), Users (people at a client), Agents (staff) with encrypted passwords,
+-- agent<->client access,
 -- polymorphic sender_type messages, explicit status table, worksheet assignment queue, and audit trail.
 
 PRAGMA foreign_keys = ON;
@@ -27,16 +28,7 @@ CREATE TABLE IF NOT EXISTS users (
     FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE RESTRICT
 );
 
--- 3. Customer Table (End Customers filing tickets)
-CREATE TABLE IF NOT EXISTS customers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- 4. Agent Table (Support staff & Admins resolving tickets)
+-- 3. Agent Table (Support staff & Admins resolving tickets)
 CREATE TABLE IF NOT EXISTS agents (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -44,7 +36,9 @@ CREATE TABLE IF NOT EXISTS agents (
     role TEXT NOT NULL CHECK(role IN ('admin', 'agent')),
     password_hash TEXT NOT NULL,
     is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    client_id INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL
 );
 
 -- 4. Status Table (Defined lifecycle & SLA breach / escalation states)
@@ -144,6 +138,18 @@ CREATE TABLE IF NOT EXISTS sessions (
     revoked_at  TIMESTAMP                  -- set on logout; NULL = active
 );
 
+-- 11. Agent <-> Client access (many-to-many, configured by admins)
+-- An agent (role 'agent') sees and works only on tickets of clients linked here.
+-- Admins are not limited. A client with no linked agents: tickets stay unassigned for the admin.
+CREATE TABLE IF NOT EXISTS agent_clients (
+    agent_id    INTEGER NOT NULL,
+    client_id   INTEGER NOT NULL,
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (agent_id, client_id),
+    FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE,
+    FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
+);
+
 -- Indexes for high performance
 CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status);
 CREATE INDEX IF NOT EXISTS idx_tickets_agent ON tickets(agent_id);
@@ -157,3 +163,5 @@ CREATE INDEX IF NOT EXISTS idx_worksheet_agent ON worksheet(agent_id);
 CREATE INDEX IF NOT EXISTS idx_audit_ticket ON audit(ticket_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_type, user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_lookup ON sessions(token_hash, revoked_at, expires_at);
+CREATE INDEX IF NOT EXISTS idx_agent_clients_client ON agent_clients(client_id);
+CREATE INDEX IF NOT EXISTS idx_agents_client ON agents(client_id);

@@ -2,7 +2,6 @@
 Seed script to populate Mini-Zendesk SQLite database.
 Seeds:
 - 10 Clients (companies) and 12 Users (people who log in; each belongs to one client)
-- 10 rows in Customers
 - 10 rows in Agents
 - 100 realistic Tickets with varied statuses and priorities
 - Conversation Messages, Worksheet records, and Audit log history
@@ -52,12 +51,13 @@ SLA_HOURS = {
 }
 
 
-ALL_TABLES = ["sessions", "audit", "worksheet", "messages", "tickets", "users", "customers",
-              "agents", "clients", "statuses", "priorities", "system_settings"]
+ALL_TABLES = ["sessions", "agent_clients", "audit", "worksheet", "messages", "tickets", "users",
+              "customers", "agents", "clients", "statuses", "priorities", "system_settings"]
 
 
 def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
-    # Rebuild from schema.sql so schema changes (e.g. users.client_id) reach an existing DB file.
+    # Drop and rebuild from schema.sql, so schema changes (e.g. users.client_id) reach an existing
+    # DB file. ('customers' is listed only to clean up DB files from before it was removed.)
     conn = get_db_connection(db_path)
     conn.execute("PRAGMA foreign_keys = OFF;")
     for table in ALL_TABLES:
@@ -68,18 +68,6 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
     init_db(db_path)
     conn = get_db_connection(db_path)
     cursor = conn.cursor()
-
-    # Clear existing data in reverse dependency order
-    cursor.execute("DELETE FROM sessions;")
-    cursor.execute("DELETE FROM audit;")
-    cursor.execute("DELETE FROM worksheet;")
-    cursor.execute("DELETE FROM messages;")
-    cursor.execute("DELETE FROM tickets;")
-    cursor.execute("DELETE FROM agents;")
-    cursor.execute("DELETE FROM customers;")
-    cursor.execute("DELETE FROM clients;")
-    cursor.execute("DELETE FROM users;")
-    cursor.execute("DELETE FROM system_settings;")
 
     default_pwd_hash = hash_password("password123")
 
@@ -132,36 +120,21 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
     for row in cursor.fetchall():
         users_by_client.setdefault(row["client_id"], []).append(row["id"])
 
-    # 3. Seed 10 Customers (legacy table, not used by the API)
-    customers = [
-        ("Ravi Kumar", "ravi@customer.com", default_pwd_hash),
-        ("Alice Johnson", "alice@clientcorp.com", default_pwd_hash),
-        ("Bob Smith", "bob@acme.com", default_pwd_hash),
-        ("Charlie Brown", "charlie@globex.com", default_pwd_hash),
-        ("Diana Prince", "diana@themyscira.com", default_pwd_hash),
-        ("Ethan Hunt", "ethan@imf.org", default_pwd_hash),
-        ("Fiona Gallagher", "fiona@chicago.com", default_pwd_hash),
-        ("George Clark", "george@initech.com", default_pwd_hash),
-        ("Hannah Abbott", "hannah@hogwarts.edu", default_pwd_hash),
-        ("Ian Malcolm", "ian@ingen.com", default_pwd_hash),
-    ]
-    cursor.executemany("INSERT INTO customers (name, email, password_hash) VALUES (?, ?, ?);", customers)
-
-    # 4. Seed 10 Agents
+    # 3. Seed 10 Agents
     agents = [
-        ("Admin Asha", "asha@demo.com", "admin", default_pwd_hash, 1),
-        ("Priya Agent", "priya@demo.com", "agent", default_pwd_hash, 1),
-        ("Rahul Agent", "rahul@demo.com", "agent", default_pwd_hash, 1),
-        ("Mrudula", "mrudula@support.com", "agent", default_pwd_hash, 1),
-        ("Monali", "monali@support.com", "agent", default_pwd_hash, 1),
-        ("Mrunnayee", "mrunnayee@support.com", "admin", default_pwd_hash, 1),
-        ("Amit Joshi", "amit@support.com", "agent", default_pwd_hash, 1),
-        ("Sneha Patil", "sneha@support.com", "agent", default_pwd_hash, 1),
-        ("Kunal Shinde", "kunal@support.com", "agent", default_pwd_hash, 1),
-        ("Divya Nair", "divya@support.com", "agent", default_pwd_hash, 1),
+        ("Admin Asha", "asha@demo.com", "admin", default_pwd_hash, 1, None),
+        ("Priya Agent", "priya@demo.com", "agent", default_pwd_hash, 1, 1),
+        ("Rahul Agent", "rahul@demo.com", "agent", default_pwd_hash, 1, 2),
+        ("Mrudula", "mrudula@support.com", "agent", default_pwd_hash, 1, None),
+        ("Monali", "monali@support.com", "agent", default_pwd_hash, 1, None),
+        ("Mrunnayee", "mrunnayee@support.com", "admin", default_pwd_hash, 1, None),
+        ("Amit Joshi", "amit@support.com", "agent", default_pwd_hash, 1, 3),
+        ("Sneha Patil", "sneha@support.com", "agent", default_pwd_hash, 1, 4),
+        ("Kunal Shinde", "kunal@support.com", "agent", default_pwd_hash, 1, None),
+        ("Divya Nair", "divya@support.com", "agent", default_pwd_hash, 1, None),
     ]
     cursor.executemany(
-        "INSERT INTO agents (name, email, role, password_hash, is_active) VALUES (?, ?, ?, ?, ?);",
+        "INSERT INTO agents (name, email, role, password_hash, is_active, client_id) VALUES (?, ?, ?, ?, ?, ?);",
         agents
     )
 
@@ -176,22 +149,38 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
     admin_ids = [row["id"] for row in cursor.fetchall()]
     admin_id = admin_ids[0]
 
+    # Agent <-> client access: each client gets 2 agents, each agent 2-3 clients.
+    # e.g. Acme -> Priya + Monali, Globex -> Rahul + Amit. Admins see everything.
+    client_agents = {
+        cid: [agent_ids[j % len(agent_ids)], agent_ids[(j + 3) % len(agent_ids)]]
+        for j, cid in enumerate(client_ids)
+    }
+    cursor.executemany(
+        "INSERT INTO agent_clients (agent_id, client_id) VALUES (?, ?);",
+        [(aid, cid) for cid, aids in client_agents.items() for aid in aids]
+    )
+
     # 5. Generate Exactly 100 Realistic Tickets
     # Distribution of statuses:
-    #   open: ~35, pending: ~25, solved: ~20, closed: ~10, sla_breached: ~5, escalated: ~5
+    #   open: ~40, pending: ~30, solved: ~20, closed: ~10
+    #   The last 10 tickets (5 open + 5 pending) are already escalated. Escalation is the
+    #   is_escalated flag on an open/pending ticket, not a status (see notes.md / constants.py).
     # Distribution of priorities:
     #   urgent: ~12, high: ~22, normal: ~46, low: ~20
     now = datetime.now(timezone.utc)
     ticket_rows = []
+    active_n = 0  # counts open/pending tickets, to choose which few are overdue
+    original_priority = []  # priority before escalation, for the 'escalated' audit row
 
     statuses_pool = (
         ["open"] * 35 +
         ["pending"] * 25 +
         ["solved"] * 20 +
         ["closed"] * 10 +
-        ["sla_breached"] * 5 +
-        ["escalated"] * 5
+        ["open"] * 5 +      # escalated (is_escalated = 1)
+        ["pending"] * 5     # escalated (is_escalated = 1)
     )
+    NEXT_PRIORITY = {"low": "normal", "normal": "high", "high": "urgent", "urgent": "urgent"}
 
     priorities_pool = (
         ["urgent"] * 12 +
@@ -215,23 +204,41 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
         client_users = users_by_client[client_id]
         user_id = client_users[(i // len(client_ids)) % len(client_users)]
 
+        is_escalated = 1 if i >= 90 else 0
+        original_priority.append(priority)
+        if is_escalated:
+            # Escalation bumped the priority one level (audit row below records the old one)
+            priority = NEXT_PRIORITY[priority]
+
         # Assign agent: leave ~10 tickets unassigned (agent_id = None) to test Unassigned views
-        if i % 10 == 0 and status in ("open", "pending"):
+        if is_escalated:
+            agent_id = admin_id  # Escalated tickets are moved to the admin
+        elif i % 10 == 0 and status in ("open", "pending"):
             agent_id = None
-        elif status == "escalated":
-            agent_id = admin_id  # Escalated tickets assigned to admin
         else:
-            agent_id = agent_ids[i % len(agent_ids)]
+            agent_id = client_agents[client_id][i % 2]  # only an agent linked to this client
 
-        is_escalated = 1 if status in ("escalated", "sla_breached") else 0
+        sla = SLA_HOURS[priority]
 
-        # Create timestamps spread across the last 5 days
-        hours_ago = (100 - i) * 1.2
+        if status in ("open", "pending") and not is_escalated:
+            # Active tickets must still be inside their SLA, otherwise the escalation job
+            # escalates them all within a minute of server start.
+            active_n += 1
+            if active_n % 12 == 0:
+                # ~5 tickets just past their SLA (15-55 min) to show escalation live in the demo
+                hours_ago = sla + 0.25 + (active_n % 5) * 0.1
+            else:
+                # Used 10%-90% of the SLA so far: due_at is still in the future
+                hours_ago = sla * (0.1 + 0.8 * ((i * 37) % 100) / 100)
+        else:
+            # Finished / already-escalated tickets: spread across the last 5 days
+            hours_ago = (100 - i) * 1.2
+
         created_at = (now - timedelta(hours=hours_ago)).isoformat()
-        updated_at = (now - timedelta(hours=max(0.5, hours_ago - 2))).isoformat()
+        updated_at = (now - timedelta(hours=hours_ago - min(2, hours_ago / 2))).isoformat()
 
         # Due date based on priority SLA
-        due_at = (now - timedelta(hours=hours_ago) + timedelta(hours=SLA_HOURS[priority])).isoformat()
+        due_at = (now - timedelta(hours=hours_ago) + timedelta(hours=sla)).isoformat()
 
         # Solved timestamp
         solved_at = updated_at if status in ("solved", "closed") else None
@@ -262,14 +269,14 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
     )
 
     # 6. Fetch created ticket IDs to attach Worksheet, Messages, and Audit rows
-    cursor.execute("SELECT id, client_id, user_id, agent_id, status, priority, created_at FROM tickets ORDER BY id ASC;")
+    cursor.execute("SELECT id, client_id, user_id, agent_id, status, priority, is_escalated, created_at FROM tickets ORDER BY id ASC;")
     all_tickets = cursor.fetchall()
 
     worksheet_rows = []
     audit_rows = []
     message_rows = []
 
-    for t in all_tickets:
+    for t, orig_pr in zip(all_tickets, original_priority):
         t_id = t["id"]
         u_id = t["user_id"]
         a_id = t["agent_id"]
@@ -285,14 +292,17 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
 
         if a_id:
             # Worksheet entry
-            reason = "escalation" if st == "escalated" else "round_robin"
-            assigned_by = admin_id if st == "escalated" else a_id
+            esc = t["is_escalated"] == 1
+            reason = "escalation" if esc else "round_robin"
+            assigned_by = None if esc else a_id  # system escalation has no human assigner
             worksheet_rows.append((t_id, a_id, assigned_by, reason, st, cr_at))
-            audit_rows.append((t_id, "system", a_id, "assigned", None, str(a_id), cr_at))
+            audit_rows.append((t_id, "system", 0, "assigned", None, str(a_id), cr_at))  # system actor id = 0
 
             # Threaded response if ticket progressed
             if st in ("pending", "solved", "closed"):
-                reply_time = (datetime.fromisoformat(cr_at) + timedelta(minutes=45)).isoformat()
+                # 45 min after creation, but never in the future (recent tickets are only minutes old)
+                reply_time = min(datetime.fromisoformat(cr_at) + timedelta(minutes=45),
+                                 now - timedelta(minutes=1)).isoformat()
                 message_rows.append((t_id, a_id, "agent", "We have investigated and applied the initial configuration patch. Please verify.", "public", reply_time))
                 message_rows.append((t_id, a_id, "agent", "Internal note: verified logs, database latency is back to normal.", "internal", reply_time))
 
@@ -300,8 +310,8 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
                 audit_rows.append((t_id, "agent", a_id, "status_change", "open", "solved", cr_at))
             elif st == "closed":
                 audit_rows.append((t_id, "agent", a_id, "status_change", "solved", "closed", cr_at))
-            elif st == "escalated":
-                audit_rows.append((t_id, "system", admin_id, "escalated", pr, "urgent", cr_at))
+            if esc:
+                audit_rows.append((t_id, "system", 0, "escalated", orig_pr, pr, cr_at))
 
     cursor.executemany(
         "INSERT INTO worksheet (ticket_id, agent_id, assigned_by, reason, status, created_at) VALUES (?, ?, ?, ?, ?, ?);",

@@ -1,0 +1,29 @@
+meta {
+  name: Create User
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/users
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "client_id": 1,
+    "name": "Bruce Wayne",
+    "email": "bruce@acme.com",
+    "password": "password123",
+    "category": "Manager"
+  }
+}
+
+docs {
+  Admin only. The user belongs to client_id and will only ever see that client's tickets.
+}

@@ -195,17 +195,57 @@ def list_agents():
     return [_agent_out(r) for r in _all("SELECT * FROM agents ORDER BY id")]
 
 
-def list_clients():
-    """Clients with how many users and tickets each has."""
-    return [_row(r) for r in _all(
-        "SELECT c.*, (SELECT COUNT(*) FROM users u WHERE u.client_id = c.id) AS user_count, "
-        "(SELECT COUNT(*) FROM tickets t WHERE t.client_id = c.id) AS ticket_count "
-        "FROM clients c ORDER BY c.name")]
+CLIENT_SELECT = ("SELECT c.*, (SELECT COUNT(*) FROM users u WHERE u.client_id = c.id) AS user_count, "
+                 "(SELECT COUNT(*) FROM tickets t WHERE t.client_id = c.id) AS ticket_count FROM clients c")
 
 
-def active_agent_ids():
-    """Round-robin pool: active agents with role 'agent' (admins only get escalations)."""
-    return [r["id"] for r in _all("SELECT id FROM agents WHERE role = 'agent' AND is_active = 1 ORDER BY id")]
+def list_clients(ids=None):
+    """All clients, or only those in `ids` (an agent sees only clients linked to them).
+    Each row includes user_count and ticket_count."""
+    if ids is None:
+        return [_row(r) for r in _all(CLIENT_SELECT + " ORDER BY c.name")]
+    if not ids:
+        return []
+    marks = ",".join("?" * len(ids))
+    return [_row(r) for r in _all(f"{CLIENT_SELECT} WHERE c.id IN ({marks}) ORDER BY c.name", list(ids))]
+
+
+def active_agent_ids(client_id=None):
+    """Round-robin / assignable pool: active agents with role 'agent' (admins only get escalations).
+    With client_id: only agents linked to that client in agent_clients."""
+    if client_id is None:
+        return [r["id"] for r in _all("SELECT id FROM agents WHERE role = 'agent' AND is_active = 1 ORDER BY id")]
+    return [r["id"] for r in _all(
+        "SELECT a.id FROM agents a JOIN agent_clients ac ON ac.agent_id = a.id "
+        "WHERE ac.client_id = ? AND a.role = 'agent' AND a.is_active = 1 ORDER BY a.id", (client_id,))]
+
+
+# ---------- agent <-> client access ----------
+def linked_client_ids(agent_id):
+    return [r["client_id"] for r in _all(
+        "SELECT client_id FROM agent_clients WHERE agent_id = ? ORDER BY client_id", (agent_id,))]
+
+
+def linked_agents(client_id):
+    """Agents linked to a client (any status), for the admin screen / reassign dropdown."""
+    return [_agent_out(r) for r in _all(
+        "SELECT a.* FROM agents a JOIN agent_clients ac ON ac.agent_id = a.id "
+        "WHERE ac.client_id = ? ORDER BY a.id", (client_id,))]
+
+
+def existing_client_ids(ids):
+    if not ids:
+        return []
+    marks = ",".join("?" * len(ids))
+    return [r["id"] for r in _all(f"SELECT id FROM clients WHERE id IN ({marks})", list(ids))]
+
+
+def set_agent_clients(agent_id, client_ids):
+    """Replace the agent's links with exactly client_ids. Call inside a transaction."""
+    _exec("DELETE FROM agent_clients WHERE agent_id = ?", (agent_id,))
+    ts = now()
+    for cid in sorted(set(client_ids)):
+        _exec("INSERT INTO agent_clients (agent_id, client_id, created_at) VALUES (?, ?, ?)", (agent_id, cid, ts))
 
 
 def admin_id():
@@ -261,8 +301,13 @@ def get_ticket(ticket_id):
     return _ticket_out(_one(TICKET_SELECT + " WHERE t.id = ?", (ticket_id,)))
 
 
-def list_tickets(status, priority, escalated, agent_id, client_id, limit, offset):
+def list_tickets(status, priority, escalated, agent_id, client_id, limit, offset, client_ids=None):
+    """client_ids: if given, only tickets of these clients (agent access scope); [] = nothing."""
     where, args = [], []
+    if client_ids is not None:
+        if not client_ids:
+            return {"items": [], "total": 0, "limit": limit, "offset": offset}
+        where.append(f"t.client_id IN ({','.join('?' * len(client_ids))})"); args.extend(client_ids)
     if status:
         where.append("t.status = ?"); args.append(status)
     if priority:
@@ -302,6 +347,11 @@ def overdue_tickets(now_iso):
     return [_ticket_out(r) for r in _all(
         TICKET_SELECT + " WHERE t.status IN ('open', 'pending') AND t.is_escalated = 0 "
         "AND t.due_at IS NOT NULL AND t.due_at < ? ORDER BY t.id", (now_iso,))]
+
+
+def update_priority(ticket_id, priority, due_at):
+    _exec("UPDATE tickets SET priority = ?, due_at = ?, updated_at = ? WHERE id = ?",
+          (priority, due_at, now(), ticket_id))
 
 
 def escalate(ticket_id, new_priority):

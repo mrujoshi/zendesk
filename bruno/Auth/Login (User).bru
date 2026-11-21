@@ -1,5 +1,5 @@
 meta {
-  name: Login (Client)
+  name: Login (User)
   type: http
   seq: 1
 }
@@ -12,10 +12,14 @@ post {
 
 body:json {
   {
-    "email": "ravi@demo.com",
+    "email": "aditi@acme.com",
     "password": "password123",
-    "user_type": "client"
+    "user_type": "user"
   }
+}
+
+docs {
+  A user belongs to one client (Aditi -> Acme Corp) and only sees that client's tickets.
 }
 
 vars:post-response {

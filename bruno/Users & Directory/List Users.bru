@@ -1,0 +1,19 @@
+meta {
+  name: List Users
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/api/users
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Staff only. Optional ?client_id=1. Agents only see users of clients linked to them.
+}

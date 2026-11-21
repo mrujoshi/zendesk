@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { api } from './api.js';
-import { Avatar, EmptyState, Icon, Skeleton, useToast } from './ui.jsx';
+import { Avatar, EmptyState, Icon, Modal, Skeleton, useToast } from './ui.jsx';
 
 // Admin-only "Team" page.
 //   Clients = companies (POST/GET /api/clients). They don't log in.
 //   Users   = people at a client who log in and raise tickets (POST/GET /api/users). Each user only
 //             ever sees their own client's tickets, so only admins create users, never open sign-up.
-//   Staff   = agents and admins (POST/GET /api/agents).
+//   Staff   = agents and admins (POST/GET /api/agents). An agent only works on the clients an admin
+//             links them to (GET/PUT /api/agents/{id}/clients); admins see every client.
 export default function AdminPanel({ agents, onAgentsChanged }) {
   const [tab, setTab] = useState('users');
   const [clients, setClients] = useState(null);
@@ -14,6 +15,8 @@ export default function AdminPanel({ agents, onAgentsChanged }) {
   const [error, setError] = useState(null);
   const [filter, setFilter] = useState('');
   const [clientFilter, setClientFilter] = useState('');
+  const [access, setAccess] = useState({}); // agent id -> linked client ids
+  const [editing, setEditing] = useState(null); // agent whose client access is being edited
 
   const load = () =>
     Promise.all([api('/clients'), api('/users')])
@@ -26,6 +29,21 @@ export default function AdminPanel({ agents, onAgentsChanged }) {
   useEffect(() => {
     load();
   }, []);
+
+  const loadAccess = () =>
+    Promise.all(
+      agents
+        .filter((a) => a.role === 'agent')
+        .map((a) => api(`/agents/${a.id}/clients`).then((r) => [a.id, r.client_ids]))
+    )
+      .then((pairs) => setAccess(Object.fromEntries(pairs)))
+      .catch((e) => setError(e.message));
+
+  useEffect(() => {
+    if (agents.length) loadAccess();
+  }, [agents]);
+
+  const clientName = (id) => clients?.find((c) => c.id === id)?.name ?? `#${id}`;
 
   const f = filter.trim().toLowerCase();
   const match = (...fields) => !f || fields.some((x) => x?.toLowerCase().includes(f));
@@ -139,16 +157,53 @@ export default function AdminPanel({ agents, onAgentsChanged }) {
             <div className="card">
               <PeopleTable
                 rows={agents.filter((a) => match(a.name, a.email))}
-                columns={['Role', 'Status']}
+                columns={['Role', 'Client access', 'Status', '']}
                 cells={(a) => [
                   <span className={`role-tag role-${a.role}`}>{a.role}</span>,
+                  a.role === 'admin' ? (
+                    <span className="muted small">All clients</span>
+                  ) : !access[a.id] ? (
+                    <Skeleton width={80} height={12} />
+                  ) : access[a.id].length === 0 ? (
+                    <span className="muted small">None yet</span>
+                  ) : (
+                    <span className="chip-list">
+                      {access[a.id].map((id) => (
+                        <span key={id} className="client-chip">
+                          {clientName(id)}
+                        </span>
+                      ))}
+                    </span>
+                  ),
                   <span className={`status-dot ${a.is_active ? '' : 'off'}`}>{a.is_active ? 'Active' : 'Disabled'}</span>,
+                  a.role === 'agent' && access[a.id] ? (
+                    <button className="ghost" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => setEditing(a)}>
+                      Edit access
+                    </button>
+                  ) : null,
                 ]}
                 empty="No staff match."
               />
             </div>
-            <p className="muted small">New tickets go to active agents in turn (admins are skipped).</p>
+            <p className="muted small">
+              Agents only see and receive tickets from the clients linked to them. New tickets go in turn to the
+              active agents linked to that client; if none are linked, the ticket stays unassigned for an admin.
+            </p>
           </>
+        )}
+
+        {editing && (
+          <AccessEditor
+            agent={editing}
+            clients={clients ?? []}
+            current={access[editing.id] ?? []}
+            onClose={() => setEditing(null)}
+            onSaved={(ids) => {
+              setAccess({ ...access, [editing.id]: ids });
+              setEditing(null);
+              load(); // refresh counts
+            }}
+          />
         )}
       </div>
     </main>
@@ -349,5 +404,64 @@ function AddAgentForm({ onCreated }) {
         </div>
       </div>
     </FormCard>
+  );
+}
+
+/* ------------------------------------------------------------------ agent <-> client access */
+
+function AccessEditor({ agent, clients, current, onClose, onSaved }) {
+  const [picked, setPicked] = useState(new Set(current));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const toast = useToast();
+
+  const toggle = (id) => {
+    const next = new Set(picked);
+    next.has(id) ? next.delete(id) : next.add(id);
+    setPicked(next);
+  };
+
+  async function save() {
+    setSaving(true);
+    setError(null);
+    try {
+      const r = await api(`/agents/${agent.id}/clients`, { method: 'PUT', body: { client_ids: [...picked] } });
+      toast(`${agent.name} can now access ${r.client_ids.length} client${r.client_ids.length === 1 ? '' : 's'}`);
+      onSaved(r.client_ids);
+    } catch (e) {
+      setError(e.message);
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal title={`Client access: ${agent.name}`} onClose={onClose} width={480}>
+      <p className="muted" style={{ margin: '-8px 0 0' }}>
+        {agent.name} will only see, and be assigned, tickets from the clients you tick.
+      </p>
+      {error && (
+        <div className="banner error" style={{ margin: 0 }}>
+          <Icon name="alert" /> {error}
+        </div>
+      )}
+      <div className="access-list">
+        {clients.map((c) => (
+          <label key={c.id} className={picked.has(c.id) ? 'on' : ''}>
+            <input type="checkbox" checked={picked.has(c.id)} onChange={() => toggle(c.id)} />
+            <span className="access-name">{c.name}</span>
+            <span className="muted small">{c.ticket_count} tickets</span>
+          </label>
+        ))}
+      </div>
+      <div className="modal-actions">
+        <span className="composer-hint">{picked.size} selected</span>
+        <button type="button" className="ghost" onClick={onClose}>
+          Cancel
+        </button>
+        <button className="primary" disabled={saving} onClick={save}>
+          {saving ? 'Saving…' : 'Save access'}
+        </button>
+      </div>
+    </Modal>
   );
 }

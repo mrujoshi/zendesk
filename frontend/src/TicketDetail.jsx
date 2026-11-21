@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, isStaff, STATUS_FLOW, timeAgo } from './api.js';
+import { api, isStaff, PRIORITIES, STATUS_FLOW, timeAgo } from './api.js';
 import { Avatar, Icon, Kbd, PriorityTag, Skeleton, SlaChip, StatusPill, useHotkeys, useToast } from './ui.jsx';
 import AssistPanel from './AssistPanel.jsx';
 
@@ -42,6 +42,16 @@ export default function TicketDetail({ id, user, agents, names, onChanged, onBac
     load();
   }, [id]);
 
+  // Only agents linked to the ticket's client (agent_clients) can be assigned to it.
+  const [linkedAgents, setLinkedAgents] = useState(null);
+  const ticketClientId = ticket?.client_id;
+  useEffect(() => {
+    if (!staff || ticketClientId == null) return;
+    api(`/clients/${ticketClientId}/agents`)
+      .then(setLinkedAgents)
+      .catch(() => setLinkedAgents([]));
+  }, [ticketClientId]);
+
   // Keep the newest message in view.
   const msgCount = ticket?.messages.length ?? 0;
   useEffect(() => {
@@ -66,6 +76,8 @@ export default function TicketDetail({ id, user, agents, names, onChanged, onBac
     }
   }
 
+  const changePriority = (priority) =>
+    mutate(() => api(`/tickets/${id}/priority`, { method: 'PATCH', body: { priority } }), `Priority set to ${priority}`);
   const changeStatus = (status) =>
     mutate(() => api(`/tickets/${id}/status`, { method: 'PATCH', body: { status } }), `Status changed to ${status}`);
   const assign = (agentId) =>
@@ -122,7 +134,7 @@ export default function TicketDetail({ id, user, agents, names, onChanged, onBac
   const closed = ticket.status === 'closed';
   const moves = staff ? STATUS_FLOW[ticket.status] ?? [] : [];
   // The API only accepts active agents with role 'agent' for manual assignment.
-  const assignable = agents.filter((a) => a.is_active && a.role === 'agent');
+  const assignable = (linkedAgents ?? []).filter((a) => a.is_active && a.role === 'agent');
   const requester = ticket.user_name ?? ticket.client_name; // user who raised it (legacy rows: the client)
   const agentName = ticket.agent_name ?? names.agent(ticket.agent_id);
 
@@ -312,7 +324,10 @@ export default function TicketDetail({ id, user, agents, names, onChanged, onBac
                         </option>
                       ))}
                     </select>
-                    {user.role === 'agent' && ticket.agent_id !== user.id && (
+                    {linkedAgents && assignable.length === 0 && (
+                      <span className="muted small">No agents are linked to {ticket.client_name}. An admin can link them on the Team page.</span>
+                    )}
+                    {user.role === 'agent' && ticket.agent_id !== user.id && assignable.some((a) => a.id === user.id) && (
                       <button className="ghost" style={{ alignSelf: 'flex-start', padding: '4px 8px' }} disabled={busy} onClick={() => assign(user.id)}>
                         <Icon name="user" size={14} /> Assign to me
                       </button>
@@ -332,9 +347,22 @@ export default function TicketDetail({ id, user, agents, names, onChanged, onBac
               </div>
               <div className="prop">
                 <span className="prop-label">Priority</span>
-                <span className="prop-value">
-                  <PriorityTag priority={ticket.priority} />
-                </span>
+                {staff && ['open', 'pending'].includes(ticket.status) ? (
+                  <>
+                    <select value={ticket.priority} disabled={busy} onChange={(e) => changePriority(e.target.value)} aria-label="Priority">
+                      {PRIORITIES.map((p) => (
+                        <option key={p.value} value={p.value}>
+                          {p.label} ({p.sla} SLA)
+                        </option>
+                      ))}
+                    </select>
+                    <span className="muted small">Changing it recalculates the due time from when the ticket was opened.</span>
+                  </>
+                ) : (
+                  <span className="prop-value">
+                    <PriorityTag priority={ticket.priority} />
+                  </span>
+                )}
               </div>
               <div className="prop">
                 <span className="prop-label">Due</span>
@@ -426,7 +454,10 @@ function describe(e, names) {
     case 'assigned':
       return e.old_value ? `reassigned it from ${agent(e.old_value)} to ${agent(e.new_value)}` : `assigned it to ${agent(e.new_value)}`;
     case 'status':
+    case 'status_change':
       return `moved it from ${e.old_value} to ${e.new_value}`;
+    case 'priority':
+      return `changed priority from ${e.old_value} to ${e.new_value}`;
     case 'escalated':
       return `escalated it (${e.old_value} → ${e.new_value})`;
     default:

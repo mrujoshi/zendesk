@@ -1,0 +1,26 @@
+meta {
+  name: Create Client
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/clients
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "name": "Wayne Tech",
+    "email": "contact@waynetech.com"
+  }
+}
+
+docs {
+  Admin only (log in with "Login (Admin)" first). A client is a company and does not log in; add users for it with "Create User".
+}

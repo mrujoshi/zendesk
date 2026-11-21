@@ -1,0 +1,21 @@
+meta {
+  name: AI Assist (summary, sentiment, reply)
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/api/tickets/1/assist
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Staff only. Returns summary, sentiment (Angry/Neutral/Positive), confidence, steps and a suggested reply.
+  Needs ANTHROPIC_API_KEY on the server for real AI; without it, source is "offline" (keyword estimate).
+  Add ?refresh=true to regenerate instead of using the cached result.
+}

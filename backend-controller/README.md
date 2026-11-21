@@ -91,6 +91,7 @@ In `/docs`: call login, copy the token, then fill the `authorization` field on e
 | GET | `/api/tickets?status=&priority=&escalated=&agent_id=&limit=&offset=` | all | List + filters (clients see only their own) |
 | GET | `/api/tickets/{id}` | all | Detail with message thread |
 | PATCH | `/api/tickets/{id}/status` | staff | Change status (validated) |
+| PATCH | `/api/tickets/{id}/priority` | staff | Change priority; SLA deadline recalculated from creation time |
 | POST | `/api/tickets/{id}/assign` | staff | Manual reassign |
 | POST | `/api/tickets/{id}/messages` | all | Add message (internal = staff only) |
 | GET | `/api/tickets/{id}/messages` | all | Thread, oldest first |
@@ -143,6 +144,24 @@ Messages are `public` or `internal`. Clients never see internal notes and cannot
 ### Privacy
 A client asking for someone else's ticket gets **404**, not 403, so the API doesn't reveal that the ticket exists.
 
+## Agent ↔ client access
+- Table `agent_clients` (many-to-many): an agent can serve many clients, a client can have many agents.
+- **Agents** see and act only on tickets of their linked clients; anything else is **404** (list, detail, reply, status, priority, assign, audit). **Admins** see everything.
+- **Round-robin** picks the next active agent *linked to that ticket's client*. **No linked agent → ticket stays unassigned** for the admin (option A).
+- **Reassign** only to a linked agent (else 400 `agent_not_linked`). Escalation still moves tickets to the admin.
+- **Configure (admin only):** `PUT /api/agents/{id}/clients {"client_ids": [1, 2]}` replaces the list. Takes effect on the agent's next request (checked every call, not stored in the token).
+- Seed: every client has 2 agents, every agent 2–3 clients (e.g. Acme → Priya + Monali).
+
+## Priority changes
+- Staff can change priority on **open or pending** tickets (`PATCH /api/tickets/{id}/priority`).
+- The SLA deadline is recalculated from the ticket's **creation time** (like Zendesk SLA policies), not from now.
+  Raising an old ticket to urgent can make it overdue at once; the escalation job then escalates it.
+- Same priority → 400 `no_change`; solved/closed → 400 `ticket_not_active`; every change is in the audit trail (`priority low → high`).
+
+## Input cleaning
+Titles, descriptions, messages and names are trimmed; whitespace-only values are rejected with 422.
+Messages and descriptions are capped at 10,000 characters. Passwords are never trimmed.
+
 ## Errors
 
 Every error has one shape:
@@ -181,5 +200,6 @@ A table would only make sense if admins could create custom statuses from the UI
 - **Where are invalid status moves blocked?** `rules.check_transition`, called by the controller before the Model.
 - **How does round-robin work?** `rules.next_agent`: the next id after the last one, wrapping around.
 - **What if two tickets arrive at once?** Assignment runs in one transaction, so the pointer stays consistent.
+- **What if two agents change the same ticket at once?** Every write endpoint reads the ticket, checks the rule and writes inside one `BEGIN IMMEDIATE` transaction. The second request waits, sees the updated ticket and gets a clear 400 (e.g. "Ticket is already closed") instead of silently overwriting. Tested: two agents closing the same ticket at the same moment → one 200, one 400, one audit row. The escalation job re-checks each ticket under the same lock, so a manual run and the background job never escalate twice.
 - **What if the input is wrong?** Pydantic returns 422 with the field name.
 - **Why is the controller thin?** Rules live in `rules.py` and SQL lives in the Model, so each layer is easy to test and swap.
