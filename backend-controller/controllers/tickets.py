@@ -5,7 +5,7 @@ import models
 import rules
 from deps import SYSTEM, Actor, current_actor, is_staff, require_staff
 from rules import RuleError
-from constants import Priority, Status, Visibility
+from constants import AuditAction as A, Priority, Status, Visibility
 from schemas import AssignRequest, MessageCreate, PriorityUpdate, StatusUpdate, TicketCreate
 
 router = APIRouter(tags=["tickets"])
@@ -41,7 +41,7 @@ def assign_round_robin(ticket_id: int, client_id: int) -> int | None:
     if agent_id is not None:
         models.assign(ticket_id, agent_id, assigned_by=None, reason="round_robin")
         models.set_last_assigned(agent_id)
-        models.audit(ticket_id, SYSTEM.type, SYSTEM.id, "assigned", None, str(agent_id))
+        models.audit(ticket_id, SYSTEM.type, SYSTEM.id, A.ASSIGNED, None, models.agent_label(agent_id))
     return agent_id
 
 
@@ -53,7 +53,7 @@ def create_ticket(body: TicketCreate, actor: Actor = Depends(current_actor)):
     with models.transaction():
         # The ticket belongs to the user's client, so their colleagues at that client can see it too.
         t = models.create_ticket(actor.client_id, actor.id, body.title, body.description, p, rules.due_at(p))
-        models.audit(t["id"], actor.type, actor.id, "created", None, "open")
+        models.audit(t["id"], actor.type, actor.id, A.CREATED, None, "open")
         assign_round_robin(t["id"], actor.client_id)  # agents linked to the user's client
     return models.get_ticket(t["id"])
 
@@ -97,7 +97,7 @@ def change_status(ticket_id: int, body: StatusUpdate, actor: Actor = Depends(cur
         t = get_or_404(ticket_id, actor)
         rules.check_transition(t["status"], new)
         models.update_status(ticket_id, new)
-        models.audit(ticket_id, actor.type, actor.id, "status", t["status"], new)
+        models.audit(ticket_id, actor.type, actor.id, A.STATUS_CHANGE, t["status"], new)
     return models.get_ticket(ticket_id)
 
 
@@ -114,7 +114,7 @@ def change_priority(ticket_id: int, body: PriorityUpdate, actor: Actor = Depends
         # New deadline counts from when the ticket was created, not from now. Raising priority on
         # an old ticket can make it overdue at once; the escalation job then handles it.
         models.update_priority(ticket_id, new, rules.due_at(new, t["created_at"]))
-        models.audit(ticket_id, actor.type, actor.id, "priority", t["priority"], new)
+        models.audit(ticket_id, actor.type, actor.id, A.PRIORITY_CHANGE, t["priority"], new)
     return models.get_ticket(ticket_id)
 
 
@@ -132,8 +132,12 @@ def reassign(ticket_id: int, body: AssignRequest, actor: Actor = Depends(current
         if t["agent_id"] == body.agent_id:
             return t
         models.assign(ticket_id, body.agent_id, assigned_by=actor.id, reason="manual_reassign")
-        models.audit(ticket_id, actor.type, actor.id, "assigned",
-                     str(t["agent_id"]) if t["agent_id"] else None, str(body.agent_id))
+        models.audit(ticket_id, actor.type, actor.id, A.ASSIGNED,
+                     models.agent_label(t["agent_id"]), models.agent_label(body.agent_id))
+        if body.note:
+            # The reason for the handoff is kept as an internal note (agents only), in the same transaction
+            models.add_message(ticket_id, "agent", actor.id, body.note, Visibility.INTERNAL.value)
+            models.audit(ticket_id, actor.type, actor.id, A.MESSAGE_ADDED, None, Visibility.INTERNAL.value)
     return models.get_ticket(ticket_id)
 
 
@@ -148,9 +152,10 @@ def add_message(ticket_id: int, body: MessageCreate, actor: Actor = Depends(curr
         # Checked even for internal notes: nobody writes on a closed ticket
         new_status = rules.status_after_reply(t["status"], author_type)
         msg = models.add_message(ticket_id, author_type, actor.id, body.text, body.visibility.value)
+        models.audit(ticket_id, actor.type, actor.id, A.MESSAGE_ADDED, None, body.visibility.value)
         if not internal and new_status != t["status"]:
             models.update_status(ticket_id, new_status)
-            models.audit(ticket_id, actor.type, actor.id, "status", t["status"], new_status)
+            models.audit(ticket_id, actor.type, actor.id, A.STATUS_CHANGE, t["status"], new_status)
     return msg
 
 
@@ -180,10 +185,12 @@ def escalate_overdue() -> list[int]:
             new_p = rules.escalated_priority(t["priority"])
             admin = models.admin_id()
             models.escalate(t["id"], new_p)
-            models.audit(t["id"], SYSTEM.type, SYSTEM.id, "escalated", t["priority"], new_p)
+            # Two events, as in notes.md: the automatic priority bump, then the move to an admin
+            if new_p != t["priority"]:  # urgent can't go higher: nothing to record
+                models.audit(t["id"], SYSTEM.type, SYSTEM.id, A.PRIORITY_BUMPED, t["priority"], new_p)
             if admin is not None and admin != t["agent_id"]:
                 models.assign(t["id"], admin, assigned_by=None, reason="escalation")
-                models.audit(t["id"], SYSTEM.type, SYSTEM.id, "assigned",
-                             str(t["agent_id"]) if t["agent_id"] else None, str(admin))
+            models.audit(t["id"], SYSTEM.type, SYSTEM.id, A.ESCALATED,
+                         models.agent_label(t["agent_id"]), models.agent_label(admin if admin is not None else t["agent_id"]))
         done.append(t["id"])
     return done

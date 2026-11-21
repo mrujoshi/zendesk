@@ -98,9 +98,10 @@
 9. **Audit Trail** (Append-only compliance log)
    * `id` (INTEGER, PK, AUTOINCREMENT)
    * `ticket_id` (INTEGER, NOT NULL, FK -> Tickets.id ON DELETE CASCADE)
-   * `actor_type` (TEXT: `'client'`, `'agent'`, `'admin'`)
-   * `actor_id` (INTEGER, NOT NULL)
-   * `action` (TEXT: `'created'`, `'assigned'`, `'status_change'`, `'message_added'`, `'escalated'`)
+   * `actor_type` (TEXT: `'user'`, `'agent'`, `'admin'`, `'system'`)
+   * `actor_id` (INTEGER, NOT NULL; `0` for `system`)
+   * `action` (TEXT: `'created'`, `'assigned'`, `'status_change'`, `'priority_change'`, `'priority_bumped'`, `'escalated'`, `'message_added'`)
+   * *Immutable:* SQLite triggers `audit_no_update` / `audit_no_delete` abort any UPDATE or DELETE.
    * `old_value` (TEXT, NULLABLE)
    * `new_value` (TEXT, NULLABLE)
    * `created_at` (TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
@@ -228,8 +229,10 @@ Every entry in the `audit` table records the following structured fields:
      - `'created'`: Initial ticket creation.
      - `'assigned'`: Round-robin or manual agent reassignment.
      - `'status_change'`: State lifecycle progression (`open`, `pending`, `solved`, `closed`).
-     - `'priority_bumped'`: Dynamic SLA elevation.
+     - `'priority_change'`: Manual priority change by an agent/admin (SLA deadline recalculated).
+     - `'priority_bumped'`: Dynamic SLA elevation (system, when the SLA is breached).
      - `'escalated'`: Tier-2 or Admin reassignment due to breach.
+     - `'message_added'`: Public reply or internal note (`new_value` = `public` / `internal`).
 5. **Delta Tracking (`old_value` $\rightarrow$ `new_value`):**
    - Captures previous and new values explicitly (e.g., `old_value: "open"`, `new_value: "pending"` or `old_value: "Agent Priya (2)"`, `new_value: "Agent Rahul (3)"`).
    - Provides clear diffs without requiring queries against external snapshots.
@@ -243,7 +246,8 @@ Every entry in the `audit` table records the following structured fields:
 | Question / Challenge | Engineering Solution & Architectural Defense |
 | :--- | :--- |
 | **How do you guarantee atomicity?** | **Single SQLite Transaction:** Every state change and its corresponding audit record are wrapped inside the same database transaction (`BEGIN ... COMMIT`). If the audit write fails, the ticket mutation rolls back completely, ensuring zero drift between ticket state and audit history. |
-| **How is audit immutability enforced?** | **Append-Only Schema & Controller Guardrails:** The API layer exposes **zero** `PUT`, `PATCH`, or `DELETE` endpoints for `/api/tickets/{id}/audit`. The database model only supports `INSERT` queries for the audit table. |
+| **How is audit immutability enforced?** | **Three layers:** (1) the API exposes **zero** `PUT`, `PATCH` or `DELETE` endpoints for audit (they return 405); (2) the Model layer only ever `INSERT`s into `audit`; (3) **the database itself** rejects changes: SQLite triggers `audit_no_update` / `audit_no_delete` abort any UPDATE or DELETE, even from a manual SQL session. |
+| **Is it queryable?** | **Yes:** `GET /api/audit?ticket_id=&actor_type=&actor_id=&action=&since=&until=&limit=&offset=` (staff; agents only see their linked clients), newest first, with `actor_name` and `ticket_title` on every row. |
 | **How are automated system actions tracked?** | **Explicit System Attribution:** Background cron jobs and the 60-second SLA escalation worker execute with `actor_type = 'system'` and `actor_id = 0`, ensuring transparent distinction between human agent actions and automated triggers. |
 | **Who can view the audit trail (RBAC)?** | **Staff-Only Access:** The endpoint `GET /api/tickets/{id}/audit` is protected by role-based session middleware. Only authenticated `agent` and `admin` roles can query audit logs; client requesters are restricted with `403 Forbidden` to safeguard internal operational metrics and reassignment notes. |
 | **What about read/write lock contention?** | **SQLite WAL Mode (`PRAGMA journal_mode = WAL`):** Enables continuous concurrent reads while background writes append new audit records without database locking bottlenecks. |
@@ -271,8 +275,8 @@ For evaluation and panel presentation, follow this crisp 90-second workflow to d
 
 4. **Step 4: SLA Escalation Trigger (0:50 - 1:10)**
    - Fast-forward or trigger escalation worker: `POST /api/escalations/run`.
-   - **Show Background Attribution:** Status transitions to `'escalated'`, priority bumps, ticket reassigns to Admin.
-   - **Show Audit Log:** Entry displays `actor_type: 'system'`, `actor_id: 0`, `action: 'escalated'`.
+   - **Show Background Attribution:** Ticket is flagged escalated (`is_escalated = 1`; status stays open/pending), priority bumps, ticket reassigns to Admin.
+   - **Show Audit Log:** Entries `priority_bumped` (e.g. `high → urgent`) and `escalated` (`Priya Agent (2) → Admin Asha (1)`), both `actor_type: 'system'`, `actor_id: 0`.
 
 5. **Step 5: Final Resolution & Audit Ledger Review (1:10 - 1:30)**
    - Agent resolves ticket (`solved`).

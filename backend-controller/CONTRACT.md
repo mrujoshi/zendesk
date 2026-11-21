@@ -68,9 +68,10 @@ Only admins create clients and users (no open sign-up, otherwise anyone could jo
 | GET | `/api/tickets/{id}` (includes `messages`) | all |
 | PATCH | `/api/tickets/{id}/status` `{status}` | staff |
 | PATCH | `/api/tickets/{id}/priority` `{priority}` | staff (open/pending tickets only; SLA deadline recalculated from creation; audit action `priority`) |
-| POST | `/api/tickets/{id}/assign` `{agent_id}` | staff |
+| POST | `/api/tickets/{id}/assign` `{agent_id, note?}` | staff (`note` is saved as an internal note) |
 | POST | `/api/tickets/{id}/messages` `{text, visibility}` | all (internal = staff only) |
-| GET | `/api/tickets/{id}/audit` | staff |
+| GET | `/api/tickets/{id}/audit` | staff (oldest first, with `actor_name`) |
+| GET | `/api/audit?ticket_id=&actor_type=&actor_id=&action=&since=&until=&limit=&offset=` | staff (agents: linked clients only); newest first, with `actor_name`, `ticket_title` |
 | GET | `/api/tickets/{id}/assist?refresh=` → `{category, summary, sentiment: Angry\|Neutral\|Positive, sentiment_reason, confidence, steps[], suggested_reply, source: ai\|offline, model, generated_at, cached}` | staff (AI assistant; needs `ANTHROPIC_API_KEY` on the server, else `source: offline`) |
 | GET | `/api/reports/daily?day=YYYY-MM-DD` | staff |
 | POST | `/api/escalations/run` | admin (demo button) |

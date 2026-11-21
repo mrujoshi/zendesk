@@ -152,6 +152,7 @@ A client asking for someone else's ticket gets **404**, not 403, so the API does
 - **Configure (admin only):** `PUT /api/agents/{id}/clients {"client_ids": [1, 2]}` replaces the list. Takes effect on the agent's next request (checked every call, not stored in the token).
 - Seed: every client has 2 agents, every agent 2–3 clients (e.g. Acme → Priya + Monali).
 
+
 ## Priority changes
 - Staff can change priority on **open or pending** tickets (`PATCH /api/tickets/{id}/priority`).
 - The SLA deadline is recalculated from the ticket's **creation time** (like Zendesk SLA policies), not from now.
@@ -161,6 +162,25 @@ A client asking for someone else's ticket gets **404**, not 403, so the API does
 ## Input cleaning
 Titles, descriptions, messages and names are trimmed; whitespace-only values are rejected with 422.
 Messages and descriptions are capped at 10,000 characters. Passwords are never trimmed.
+
+## Audit trail
+Every change is one row in `audit`: **who** (`actor_type`, `actor_id`), **what** (`action`, `old_value → new_value`), **when** (`created_at`).
+
+| action | written when | example delta |
+|---|---|---|
+| `created` | user opens a ticket | `→ open` |
+| `assigned` | round-robin (system) or manual reassign | `Priya Agent (2) → Rahul Agent (3)` |
+| `status_change` | status set by staff or by a reply | `open → pending` |
+| `priority_change` | staff change priority | `low → high` |
+| `priority_bumped` | SLA breached (system) | `high → urgent` |
+| `escalated` | SLA breached → moved to admin (system) | `Priya Agent (2) → Admin Asha (1)` |
+| `message_added` | reply or internal note | `→ public` / `→ internal` |
+
+- **Atomic:** the change and its audit row commit in one transaction; if the audit insert fails, the change rolls back (tested).
+- **Immutable:** no API writes to audit (PUT/DELETE → 405), the model only INSERTs, and SQLite triggers abort any UPDATE/DELETE.
+- **System actions** use `actor_type = 'system'`, `actor_id = 0`.
+- **Read:** `GET /api/tickets/{id}/audit` (one ticket, oldest first) and `GET /api/audit` with filters `ticket_id, actor_type, actor_id, action, since, until, limit, offset` (newest first). Staff only; agents see only their linked clients.
+- **Reassign with a reason:** `POST /api/tickets/{id}/assign {"agent_id": 3, "note": "..."}` saves the note as an internal message and audits it.
 
 ## Errors
 

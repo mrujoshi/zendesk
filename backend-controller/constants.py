@@ -51,3 +51,14 @@ NEXT_PRIORITY = {
     Priority.HIGH: Priority.URGENT,
     Priority.URGENT: Priority.URGENT,
 }
+
+
+class AuditAction(str, Enum):
+    """Audit trail event taxonomy (see notes.md, "The 5 Core Audit Trail Elements")."""
+    CREATED = "created"                  # ticket opened
+    ASSIGNED = "assigned"                # round-robin or manual reassignment
+    STATUS_CHANGE = "status_change"      # open / pending / solved / closed
+    PRIORITY_CHANGE = "priority_change"  # manual change by staff
+    PRIORITY_BUMPED = "priority_bumped"  # automatic +1 when the SLA is breached
+    ESCALATED = "escalated"              # moved to an admin because of the SLA breach
+    MESSAGE_ADDED = "message_added"      # public reply or internal note

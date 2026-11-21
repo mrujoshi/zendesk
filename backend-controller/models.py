@@ -388,6 +388,44 @@ def audit(ticket_id, actor_type, actor_id, action, old_value, new_value):
           "VALUES (?, ?, ?, ?, ?, ?, ?)", (ticket_id, actor_type, actor_id, action, old_value, new_value, now()))
 
 
+def agent_label(agent_id):
+    """'Priya Agent (2)' for audit deltas (notes.md); None when unassigned."""
+    if agent_id is None:
+        return None
+    r = _one("SELECT name FROM agents WHERE id = ?", (agent_id,))
+    return f"{r['name']} ({agent_id})" if r else f"#{agent_id}"
+
+
+_ACTOR_NAME = ("CASE e.actor_type "
+               "WHEN 'system' THEN 'System' "
+               "WHEN 'user' THEN (SELECT name FROM users WHERE id = e.actor_id) "
+               "WHEN 'client' THEN (SELECT name FROM clients WHERE id = e.actor_id) "
+               "ELSE (SELECT name FROM agents WHERE id = e.actor_id) END")
+
+
+def query_audit(client_ids, ticket_id, actor_type, actor_id, action, since, until, limit, offset):
+    """Audit events across tickets, newest first. client_ids: None = all (admin), list = scope."""
+    where, args = [], []
+    if client_ids is not None:
+        if not client_ids:
+            return {"items": [], "total": 0, "limit": limit, "offset": offset}
+        where.append(f"t.client_id IN ({','.join('?' * len(client_ids))})"); args.extend(client_ids)
+    for col, val in (("e.ticket_id", ticket_id), ("e.actor_type", actor_type),
+                     ("e.actor_id", actor_id), ("e.action", action)):
+        if val is not None:
+            where.append(f"{col} = ?"); args.append(val)
+    if since:
+        where.append("e.created_at >= ?"); args.append(since)
+    if until:
+        where.append("e.created_at < ?"); args.append(until)
+    w = (" WHERE " + " AND ".join(where)) if where else ""
+    base = f"FROM audit e JOIN tickets t ON t.id = e.ticket_id{w}"
+    total = _one(f"SELECT COUNT(*) AS n {base}", args)["n"]
+    rows = _all(f"SELECT e.*, {_ACTOR_NAME} AS actor_name, t.title AS ticket_title, t.client_id "
+                f"{base} ORDER BY e.created_at DESC, e.id DESC LIMIT ? OFFSET ?", [*args, limit, offset])
+    return {"items": [_row(r) for r in rows], "total": total, "limit": limit, "offset": offset}
+
+
 def get_audit(ticket_id):
     """Oldest first, with actor_name resolved from the right table."""
     return [_row(r) for r in _all(

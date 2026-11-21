@@ -150,6 +150,17 @@ CREATE TABLE IF NOT EXISTS agent_clients (
     FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
 );
 
+-- Audit trail is append-only, enforced by the database itself (not just by the API):
+-- any UPDATE or DELETE on an audit row is aborted. (seed.py rebuilds tables with DROP, which is allowed.)
+CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit
+BEGIN
+    SELECT RAISE(ABORT, 'audit trail is append-only: rows cannot be updated');
+END;
+CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit
+BEGIN
+    SELECT RAISE(ABORT, 'audit trail is append-only: rows cannot be deleted');
+END;
+
 -- Indexes for high performance
 CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status);
 CREATE INDEX IF NOT EXISTS idx_tickets_agent ON tickets(agent_id);
@@ -161,6 +172,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_ticket_order ON messages(ticket_id, crea
 CREATE INDEX IF NOT EXISTS idx_worksheet_ticket ON worksheet(ticket_id);
 CREATE INDEX IF NOT EXISTS idx_worksheet_agent ON worksheet(agent_id);
 CREATE INDEX IF NOT EXISTS idx_audit_ticket ON audit(ticket_id);
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit(created_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_type, user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_lookup ON sessions(token_hash, revoked_at, expires_at);
 CREATE INDEX IF NOT EXISTS idx_agent_clients_client ON agent_clients(client_id);

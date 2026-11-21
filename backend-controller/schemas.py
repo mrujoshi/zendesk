@@ -63,6 +63,7 @@ class PriorityUpdate(BaseModel):
 
 class AssignRequest(BaseModel):
     agent_id: int
+    note: Body | None = None  # optional reason, stored as an internal note + audited
 
 
 class AgentClientsUpdate(BaseModel):

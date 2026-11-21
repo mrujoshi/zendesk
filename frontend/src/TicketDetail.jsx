@@ -447,7 +447,8 @@ function actorName(e) {
 }
 
 function describe(e, names) {
-  const agent = (v) => (v ? names.agent(Number(v)) : 'nobody');
+  // Audit values are labels like "Priya Agent (2)"; older rows may hold a bare id like "2".
+  const agent = (v) => (!v ? 'nobody' : /^\d+$/.test(v) ? names.agent(Number(v)) : v);
   switch (e.action) {
     case 'created':
       return 'opened the ticket';
@@ -457,9 +458,16 @@ function describe(e, names) {
     case 'status_change':
       return `moved it from ${e.old_value} to ${e.new_value}`;
     case 'priority':
+    case 'priority_change':
       return `changed priority from ${e.old_value} to ${e.new_value}`;
+    case 'priority_bumped':
+      return `raised priority from ${e.old_value} to ${e.new_value} (SLA breached)`;
+    case 'message_added':
+      return e.new_value === 'internal' ? 'added an internal note' : 'posted a reply';
     case 'escalated':
-      return `escalated it (${e.old_value} → ${e.new_value})`;
+      return /^(low|normal|high|urgent)$/.test(e.new_value ?? '')
+        ? `escalated it (${e.old_value} → ${e.new_value})`
+        : `escalated it from ${agent(e.old_value)} to ${agent(e.new_value)}`;
     default:
       return `${e.action} ${e.old_value ?? ''} → ${e.new_value ?? ''}`;
   }
