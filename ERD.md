@@ -25,14 +25,6 @@ erDiagram
         timestamp created_at "Registration time"
     }
 
-    CUSTOMERS {
-        int id PK "Auto Increment"
-        string name "End User Name"
-        string email UK "Unique Login"
-        string password_hash "Encrypted Password"
-        timestamp created_at "Registration time"
-    }
-
     AGENTS {
         int id PK "Auto Increment"
         string name "Support Staff Name"

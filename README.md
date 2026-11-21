@@ -58,7 +58,7 @@ The system enforces strict separation of concerns across layers:
 * 🔑 **Token-Based Session Authentication:** Hashed Bearer tokens (SHA-256), 8-hour expiry, logout revocation (`POST /api/auth/logout`), and soft-disable check on every request.
 * ⏱️ **SLA & Background Escalation Engine:** Periodic background task (every 60s) checks for overdue tickets (`due_at < NOW`), bumps priority (`low` $\rightarrow$ `normal` $\rightarrow$ `high` $\rightarrow$ `urgent`), flags `is_escalated = 1`, and reassigns to an Admin with an audit log.
 * 📊 **Daily Manager Report:** `GET /api/reports/daily?day=YYYY-MM-DD` returns ticket counts (created, solved, open, escalated) and active load per agent.
-* 🌱 **Demo-Ready Seed Data:** Pre-populated with **10 rows each** across Users, Clients, Customers, and Agents.
+* 🌱 **Demo-Ready Seed Data:** Pre-populated with **10 rows each** across Users, Clients, and Agents.
 
 ---
 
@@ -70,7 +70,6 @@ SQLite datastore located at `backend/zendesk.db` configured with `WAL` journal m
 | Table | Purpose | Key Columns |
 | :--- | :--- | :--- |
 | **`clients`** | External companies / requesters | `id`, `name`, `email`, `password_hash`, `created_at` |
-| **`customers`** | End-user customer accounts | `id`, `name`, `email`, `password_hash`, `created_at` |
 | **`agents`** | Internal support staff and admins | `id`, `name`, `email`, `role` (`admin`/`agent`), `password_hash`, `is_active` |
 | **`users`** | General internal directory | `id`, `name`, `category`, `password_hash`, `created_at` |
 | **`tickets`** | Core ticket entity | `id`, `title`, `description`, `status`, `priority`, `client_id`, `agent_id`, `due_at`, `is_escalated`, `solved_at` |
@@ -148,7 +147,7 @@ npm run dev
 * **Browser UI:** [http://localhost:5173](http://localhost:5173)
 
 ### 3. Database Seeding & Standalone Dumps
-To re-initialize and seed 10 rows in user/client/customer/agent tables plus 100 tickets:
+To re-initialize and seed 10 rows in user/client/agent tables plus 100 tickets:
 ```bash
 python3 ../backend/seed.py
 ```

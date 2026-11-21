@@ -3,7 +3,6 @@ Seed script to populate Mini-Zendesk SQLite database.
 Seeds:
 - 10 rows in Users
 - 10 rows in Clients
-- 10 rows in Customers
 - 10 rows in Agents
 - 100 realistic Tickets with varied statuses and priorities
 - Conversation Messages, Worksheet records, and Audit log history
@@ -66,7 +65,6 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
     cursor.execute("DELETE FROM messages;")
     cursor.execute("DELETE FROM tickets;")
     cursor.execute("DELETE FROM agents;")
-    cursor.execute("DELETE FROM customers;")
     cursor.execute("DELETE FROM clients;")
     cursor.execute("DELETE FROM users;")
     cursor.execute("DELETE FROM system_settings;")
@@ -103,22 +101,7 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
     ]
     cursor.executemany("INSERT INTO clients (name, email, password_hash) VALUES (?, ?, ?);", clients)
 
-    # 3. Seed 10 Customers
-    customers = [
-        ("Ravi Kumar", "ravi@customer.com", default_pwd_hash),
-        ("Alice Johnson", "alice@clientcorp.com", default_pwd_hash),
-        ("Bob Smith", "bob@acme.com", default_pwd_hash),
-        ("Charlie Brown", "charlie@globex.com", default_pwd_hash),
-        ("Diana Prince", "diana@themyscira.com", default_pwd_hash),
-        ("Ethan Hunt", "ethan@imf.org", default_pwd_hash),
-        ("Fiona Gallagher", "fiona@chicago.com", default_pwd_hash),
-        ("George Clark", "george@initech.com", default_pwd_hash),
-        ("Hannah Abbott", "hannah@hogwarts.edu", default_pwd_hash),
-        ("Ian Malcolm", "ian@ingen.com", default_pwd_hash),
-    ]
-    cursor.executemany("INSERT INTO customers (name, email, password_hash) VALUES (?, ?, ?);", customers)
-
-    # 4. Seed 10 Agents
+    # 3. Seed 10 Agents
     agents = [
         ("Admin Asha", "asha@demo.com", "admin", default_pwd_hash, 1),
         ("Priya Agent", "priya@demo.com", "agent", default_pwd_hash, 1),
