@@ -196,3 +196,85 @@
   * Bumps priority one level (`low` $\rightarrow$ `normal` $\rightarrow$ `high` $\rightarrow$ `urgent`).
   * Reassigns to Admin agent.
   * Records new Worksheet row and Audit entry.
+
+---
+
+## 3. Audit Trail: Deep Dive & Architectural Discussion
+
+### Architecture & Design Philosophy
+The **Audit Trail** was selected and prioritized as the core backend stretch goal for several key architectural reasons:
+1. **Compliance & Non-Repudiation:** Enterprise support systems (such as Zendesk, ServiceNow) require strict accountability. Every state transition, ownership change, and escalation must have a verifiable author and timestamp.
+2. **Separation of Operational State vs. Historical Ledger:** 
+   - The `tickets` table represents current mutable state (`status`, `agent_id`, `priority`, `updated_at`).
+   - The `audit` table functions as an **append-only, immutable event ledger**.
+   - This prevents race conditions and makes system state verifiable from first principles.
+3. **Debugging & Operational Visibility:** When troubleshooting routing anomalies or SLA escalations, developers and team leads can reconstruct the complete lifecycle of any ticket step-by-step.
+
+---
+
+### The 5 Core Audit Trail Elements
+Every entry in the `audit` table records the following structured fields:
+
+1. **`ticket_id` (INTEGER, FK -> Tickets.id):**
+   - Links the event to the target ticket. Configured with `ON DELETE CASCADE` for referential integrity.
+2. **`actor_type` (TEXT: `'client'`, `'agent'`, `'admin'`, `'system'`):**
+   - Polymorphic indicator defining which subsystem or entity initiated the change.
+   - `'system'` distinguishes automated cron jobs/daemons from human operators.
+3. **`actor_id` (INTEGER):**
+   - Identifier of the actor. Points to `clients.id` or `agents.id`.
+   - Automated jobs (like the background SLA escalation worker) use `actor_id = 0`.
+4. **`action` (TEXT):**
+   - Explicit event taxonomy:
+     - `'created'`: Initial ticket creation.
+     - `'assigned'`: Round-robin or manual agent reassignment.
+     - `'status_change'`: State lifecycle progression (`open`, `pending`, `solved`, `closed`).
+     - `'priority_bumped'`: Dynamic SLA elevation.
+     - `'escalated'`: Tier-2 or Admin reassignment due to breach.
+5. **Delta Tracking (`old_value` $\rightarrow$ `new_value`):**
+   - Captures previous and new values explicitly (e.g., `old_value: "open"`, `new_value: "pending"` or `old_value: "Agent Priya (2)"`, `new_value: "Agent Rahul (3)"`).
+   - Provides clear diffs without requiring queries against external snapshots.
+6. **`created_at` (TIMESTAMP DEFAULT CURRENT_TIMESTAMP):**
+   - Immutable ISO-8601 UTC timestamp of the transaction commit.
+
+---
+
+### Edge Handling, Concurrency & Q&A Defense
+
+| Question / Challenge | Engineering Solution & Architectural Defense |
+| :--- | :--- |
+| **How do you guarantee atomicity?** | **Single SQLite Transaction:** Every state change and its corresponding audit record are wrapped inside the same database transaction (`BEGIN ... COMMIT`). If the audit write fails, the ticket mutation rolls back completely, ensuring zero drift between ticket state and audit history. |
+| **How is audit immutability enforced?** | **Append-Only Schema & Controller Guardrails:** The API layer exposes **zero** `PUT`, `PATCH`, or `DELETE` endpoints for `/api/tickets/{id}/audit`. The database model only supports `INSERT` queries for the audit table. |
+| **How are automated system actions tracked?** | **Explicit System Attribution:** Background cron jobs and the 60-second SLA escalation worker execute with `actor_type = 'system'` and `actor_id = 0`, ensuring transparent distinction between human agent actions and automated triggers. |
+| **Who can view the audit trail (RBAC)?** | **Staff-Only Access:** The endpoint `GET /api/tickets/{id}/audit` is protected by role-based session middleware. Only authenticated `agent` and `admin` roles can query audit logs; client requesters are restricted with `403 Forbidden` to safeguard internal operational metrics and reassignment notes. |
+| **What about read/write lock contention?** | **SQLite WAL Mode (`PRAGMA journal_mode = WAL`):** Enables continuous concurrent reads while background writes append new audit records without database locking bottlenecks. |
+
+---
+
+### 90-Second Demo Walkthrough Script
+
+For evaluation and panel presentation, follow this crisp 90-second workflow to demonstrate the Audit Trail in action:
+
+1. **Step 1: Create Ticket (0:00 - 0:15)**
+   - Log in as client user (`aditi@acme.com`).
+   - File a ticket: *"Payment gateway timeout on checkout"*, Priority: `urgent`.
+   - **Show Audit Log:** Displays `action: 'created'`, `actor_type: 'client'`, `actor_id: 1`, assigned via round-robin to next active agent.
+
+2. **Step 2: Agent Response & Auto-Status (0:15 - 0:35)**
+   - Log in as assigned agent (`priya@demo.com`).
+   - Post reply: *"Investigating server logs now. Can you share the transaction ID?"*
+   - **Show Auto-Status:** Status automatically transitions from `open` $\rightarrow$ `pending`.
+   - **Show Audit Log:** New audit entry logged: `action: 'status_change'`, `old_value: 'open'`, `new_value: 'pending'`.
+
+3. **Step 3: Manual Reassignment (0:35 - 0:50)**
+   - Reassign ticket from `Priya` to `Rahul` (`agent_id: 3`) with note *"Requires backend database inspection"*.
+   - **Show Worksheet & Audit:** `action: 'assigned'`, `old_value: 'Priya (2)'`, `new_value: 'Rahul (3)'`. Worksheet logs new routing row.
+
+4. **Step 4: SLA Escalation Trigger (0:50 - 1:10)**
+   - Fast-forward or trigger escalation worker: `POST /api/escalations/run`.
+   - **Show Background Attribution:** Status transitions to `'escalated'`, priority bumps, ticket reassigns to Admin.
+   - **Show Audit Log:** Entry displays `actor_type: 'system'`, `actor_id: 0`, `action: 'escalated'`.
+
+5. **Step 5: Final Resolution & Audit Ledger Review (1:10 - 1:30)**
+   - Agent resolves ticket (`solved`).
+   - Open Audit Trail timeline view: demonstrate full chronological history showing the exact sequence of actors, timestamps, and state transitions from creation to resolution.
+
