@@ -1,7 +1,12 @@
 """
 Seed script to populate Mini-Zendesk SQLite database.
-Seeds 10 rows each in Users, Clients, Customers, and Agents with encrypted passwords,
-along with sample Tickets, Messages, Worksheet, and Audit records.
+Seeds:
+- 10 rows in Users
+- 10 rows in Clients
+- 10 rows in Customers
+- 10 rows in Agents
+- 100 realistic Tickets with varied statuses and priorities
+- Conversation Messages, Worksheet records, and Audit log history
 """
 
 from datetime import datetime, timezone, timedelta
@@ -13,6 +18,39 @@ from database import get_db_connection, init_db, DEFAULT_DB_PATH
 def hash_password(password: str) -> str:
     """Encrypted/hashed password using SHA-256."""
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+# 20 realistic ticket templates (cycled with variations to reach 100 unique tickets)
+TICKET_TEMPLATES = [
+    ("SSO login failure with Okta integration", "Users in EU region cannot authenticate via SAML 2.0; receiving 'Invalid SAML response' error on callback.", "urgent", "open"),
+    ("Payment gateway returned error 502 on renewal", "Annual subscription failed during automated Stripe charge. Need invoice reissued.", "high", "pending"),
+    ("Need bulk export of customer contact records", "Please provide a complete CSV dump of our company contacts created before Q3.", "low", "solved"),
+    ("Webhook delivery latency exceeding 5 seconds", "Event callbacks for ticket.updated are delayed by up to 10 minutes during peak hours.", "normal", "open"),
+    ("Two-factor authentication code not received via SMS", "Team members on Vodafone network in Mumbai report OTP SMS messages are not arriving.", "urgent", "open"),
+    ("Invoice for October missing tax deduction breakdown", "The latest consolidated invoice does not show the GST breakdown required by our accounting department.", "low", "closed"),
+    ("Feature Request: Add dark mode toggle in portal", "Would greatly appreciate a system-level dark theme for our agents working night shifts.", "low", "open"),
+    ("API rate limit reached unexpectedly on /tickets endpoint", "Our integration script received 429 Too Many Requests despite staying within the 100 req/min limit.", "normal", "pending"),
+    ("Dashboard widget charts failing to load on Safari", "Analytics graphs render blank in Safari 17.2, though they display properly in Chrome and Firefox.", "normal", "open"),
+    ("Unable to invite new team members with Admin role", "When sending invite email to new supervisor, the role dropdown resets to Agent.", "high", "solved"),
+    ("SSL certificate warning on custom domain setup", "Visiting support.acme.com shows NET::ERR_CERT_COMMON_NAME_INVALID error.", "urgent", "escalated"),
+    ("Password reset email link expired immediately", "The link sent to our director expired within 2 minutes instead of the documented 24 hours.", "high", "solved"),
+    ("Slow query response on ticket search with multiple tags", "Full-text search queries take over 4 seconds when searching with 3 or more tags.", "normal", "open"),
+    ("Need SOC2 Type II compliance report for annual audit", "Our security team requires your latest SOC2 compliance summary for our vendor review.", "low", "solved"),
+    ("CSV import failing with invalid character encoding", "Importing user list fails on row 142 due to non-ASCII accented characters in customer names.", "normal", "pending"),
+    ("Email notification not sent when ticket is assigned", "Agent assignment notifications stopped firing around 09:00 UTC this morning.", "high", "open"),
+    ("Mobile responsive view breaks on conversation thread", "Long code snippets in message threads overflow the viewport on iOS Safari.", "normal", "closed"),
+    ("Session timeout logging agents out every 10 minutes", "Staff are repeatedly prompted to log in while drafting responses to customers.", "urgent", "sla_breached"),
+    ("Cannot download PDF attachments larger than 10MB", "Attempting to download architecture diagrams returns HTTP 413 Payload Too Large.", "normal", "pending"),
+    ("Requesting sandbox environment reset for QA testing", "Please flush the staging database and seed fresh demo tickets for our upcoming demo.", "low", "closed"),
+]
+
+# SLA durations by priority
+SLA_HOURS = {
+    "urgent": 1,
+    "high": 4,
+    "normal": 24,
+    "low": 48
+}
 
 
 def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
@@ -34,7 +72,7 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
 
     default_pwd_hash = hash_password("password123")
 
-    # 1. Seed 10 Users (General / Internal users)
+    # 1. Seed 10 Users
     users = [
         ("Aarav Patel", "Employee", default_pwd_hash),
         ("Aditi Sharma", "Manager", default_pwd_hash),
@@ -47,12 +85,9 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
         ("Siddharth Rao", "DevOps", default_pwd_hash),
         ("Neha Joshi", "Product", default_pwd_hash),
     ]
-    cursor.executemany(
-        "INSERT INTO users (name, category, password_hash) VALUES (?, ?, ?);",
-        users
-    )
+    cursor.executemany("INSERT INTO users (name, category, password_hash) VALUES (?, ?, ?);", users)
 
-    # 2. Seed 10 Clients (Companies / Accounts)
+    # 2. Seed 10 Clients
     clients = [
         ("Acme Corp", "support@acme.com", default_pwd_hash),
         ("Globex International", "it@globex.com", default_pwd_hash),
@@ -65,12 +100,9 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
         ("Massive Dynamic", "contact@massivedynamic.com", default_pwd_hash),
         ("Hooli Cloud", "billing@hooli.com", default_pwd_hash),
     ]
-    cursor.executemany(
-        "INSERT INTO clients (name, email, password_hash) VALUES (?, ?, ?);",
-        clients
-    )
+    cursor.executemany("INSERT INTO clients (name, email, password_hash) VALUES (?, ?, ?);", clients)
 
-    # 3. Seed 10 Customers (End-user Requesters filing tickets)
+    # 3. Seed 10 Customers
     customers = [
         ("Ravi Kumar", "ravi@customer.com", default_pwd_hash),
         ("Alice Johnson", "alice@clientcorp.com", default_pwd_hash),
@@ -83,12 +115,9 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
         ("Hannah Abbott", "hannah@hogwarts.edu", default_pwd_hash),
         ("Ian Malcolm", "ian@ingen.com", default_pwd_hash),
     ]
-    cursor.executemany(
-        "INSERT INTO customers (name, email, password_hash) VALUES (?, ?, ?);",
-        customers
-    )
+    cursor.executemany("INSERT INTO customers (name, email, password_hash) VALUES (?, ?, ?);", customers)
 
-    # 4. Seed 10 Agents (Support staff and Admins)
+    # 4. Seed 10 Agents
     agents = [
         ("Admin Asha", "asha@demo.com", "admin", default_pwd_hash, 1),
         ("Priya Agent", "priya@demo.com", "agent", default_pwd_hash, 1),
@@ -102,140 +131,168 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
         ("Divya Nair", "divya@support.com", "agent", default_pwd_hash, 1),
     ]
     cursor.executemany(
-        """
-        INSERT INTO agents (name, email, role, password_hash, is_active)
-        VALUES (?, ?, ?, ?, ?);
-        """,
+        "INSERT INTO agents (name, email, role, password_hash, is_active) VALUES (?, ?, ?, ?, ?);",
         agents
     )
 
-    # Fetch IDs for seeding tickets and messages
-    cursor.execute("SELECT id, name FROM agents;")
-    agent_map = {row["name"]: row["id"] for row in cursor.fetchall()}
+    # Fetch IDs
+    cursor.execute("SELECT id FROM clients ORDER BY id ASC;")
+    client_ids = [row["id"] for row in cursor.fetchall()]
 
-    cursor.execute("SELECT id, name FROM clients;")
-    client_map = {row["name"]: row["id"] for row in cursor.fetchall()}
+    cursor.execute("SELECT id FROM agents WHERE role = 'agent' ORDER BY id ASC;")
+    agent_ids = [row["id"] for row in cursor.fetchall()]
 
-    # 5. Seed Tickets
+    cursor.execute("SELECT id FROM agents WHERE role = 'admin' ORDER BY id ASC;")
+    admin_ids = [row["id"] for row in cursor.fetchall()]
+    admin_id = admin_ids[0]
+
+    # 5. Generate Exactly 100 Realistic Tickets
+    # Distribution of statuses:
+    #   open: ~35, pending: ~25, solved: ~20, closed: ~10, sla_breached: ~5, escalated: ~5
+    # Distribution of priorities:
+    #   urgent: ~12, high: ~22, normal: ~46, low: ~20
     now = datetime.now(timezone.utc)
-    tickets = [
-        (
-            "Cannot access admin dashboard",
-            "Getting 403 Forbidden error on /admin route after password reset.",
-            "open",
-            "urgent",
-            client_map["Acme Corp"],
-            agent_map["Priya Agent"],
-            0,
-            (now + timedelta(hours=1)).isoformat()
-        ),
-        (
-            "Invoice request for October subscription",
-            "Please send the October consolidated invoice for our billing records.",
-            "pending",
-            "low",
-            client_map["Globex International"],
-            agent_map["Rahul Agent"],
-            0,
-            (now + timedelta(hours=48)).isoformat()
-        ),
-        (
-            "Feature Request: Dark mode theme",
-            "Would love to have an option to switch to dark mode in the customer portal.",
-            "open",
-            "normal",
-            client_map["Initech Systems"],
-            None,  # Unassigned
-            0,
-            (now + timedelta(hours=24)).isoformat()
-        ),
-        (
-            "Password reset link expired immediately",
-            "The link in the reset email expired within 2 minutes instead of 24 hours.",
-            "solved",
-            "high",
-            client_map["Umbrella Health"],
-            agent_map["Priya Agent"],
-            0,
-            (now + timedelta(hours=4)).isoformat()
-        ),
-    ]
+    ticket_rows = []
 
-    cursor.executemany(
-        """
-        INSERT INTO tickets (title, description, status, priority, client_id, agent_id, is_escalated, due_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?);
-        """,
-        tickets
+    statuses_pool = (
+        ["open"] * 35 +
+        ["pending"] * 25 +
+        ["solved"] * 20 +
+        ["closed"] * 10 +
+        ["sla_breached"] * 5 +
+        ["escalated"] * 5
     )
 
-    cursor.execute("SELECT id, title FROM tickets ORDER BY id ASC;")
-    ticket_rows = cursor.fetchall()
-    t1_id = ticket_rows[0]["id"]
-    t2_id = ticket_rows[1]["id"]
-    t4_id = ticket_rows[3]["id"]
-
-    # 6. Seed Messages with sender_id and sender_type
-    messages = [
-        (t1_id, client_map["Acme Corp"], "client", "We are blocked from checking our team settings.", "public"),
-        (t1_id, agent_map["Priya Agent"], "agent", "Investigating the permission cache. Will update shortly.", "public"),
-        (t1_id, agent_map["Priya Agent"], "agent", "Internal note: check Redis session token TTL.", "internal"),
-
-        (t2_id, client_map["Globex International"], "client", "Can you email it to billing@globex.com directly?", "public"),
-        (t2_id, agent_map["Rahul Agent"], "agent", "Generating the PDF invoice from our portal now.", "public"),
-
-        (t4_id, client_map["Umbrella Health"], "client", "The link arrived but says 'token expired'.", "public"),
-        (t4_id, agent_map["Priya Agent"], "agent", "We patched the expiration window. Please try the new link sent just now.", "public"),
-        (t4_id, client_map["Umbrella Health"], "client", "All set! Thanks for resolving this so quickly.", "public"),
-    ]
-
-    cursor.executemany(
-        """
-        INSERT INTO messages (ticket_id, sender_id, sender_type, text, visibility)
-        VALUES (?, ?, ?, ?, ?);
-        """,
-        messages
+    priorities_pool = (
+        ["urgent"] * 12 +
+        ["high"] * 22 +
+        ["normal"] * 46 +
+        ["low"] * 20
     )
 
-    # 7. Seed Worksheet
-    worksheet_rows = [
-        (t1_id, agent_map["Priya Agent"], agent_map["Admin Asha"], "round_robin", "open"),
-        (t2_id, agent_map["Rahul Agent"], agent_map["Admin Asha"], "round_robin", "pending"),
-        (t4_id, agent_map["Priya Agent"], agent_map["Admin Asha"], "round_robin", "solved"),
-    ]
+    for i in range(100):
+        tmpl_idx = i % len(TICKET_TEMPLATES)
+        base_title, base_desc, default_prio, _ = TICKET_TEMPLATES[tmpl_idx]
+
+        # Vary title to make all 100 distinct
+        variant_num = (i // len(TICKET_TEMPLATES)) + 1
+        title = f"{base_title} (Batch #{variant_num})" if variant_num > 1 else base_title
+
+        status = statuses_pool[i]
+        priority = priorities_pool[i]
+        client_id = client_ids[i % len(client_ids)]
+
+        # Assign agent: leave ~10 tickets unassigned (agent_id = None) to test Unassigned views
+        if i % 10 == 0 and status in ("open", "pending"):
+            agent_id = None
+        elif status == "escalated":
+            agent_id = admin_id  # Escalated tickets assigned to admin
+        else:
+            agent_id = agent_ids[i % len(agent_ids)]
+
+        is_escalated = 1 if status in ("escalated", "sla_breached") else 0
+
+        # Create timestamps spread across the last 5 days
+        hours_ago = (100 - i) * 1.2
+        created_at = (now - timedelta(hours=hours_ago)).isoformat()
+        updated_at = (now - timedelta(hours=max(0.5, hours_ago - 2))).isoformat()
+
+        # Due date based on priority SLA
+        due_at = (now - timedelta(hours=hours_ago) + timedelta(hours=SLA_HOURS[priority])).isoformat()
+
+        # Solved timestamp
+        solved_at = updated_at if status in ("solved", "closed") else None
+
+        ticket_rows.append((
+            title,
+            base_desc,
+            status,
+            priority,
+            client_id,
+            agent_id,
+            is_escalated,
+            due_at,
+            solved_at,
+            created_at,
+            updated_at
+        ))
+
     cursor.executemany(
         """
-        INSERT INTO worksheet (ticket_id, agent_id, assigned_by, reason, status)
-        VALUES (?, ?, ?, ?, ?);
+        INSERT INTO tickets (
+            title, description, status, priority, client_id, agent_id,
+            is_escalated, due_at, solved_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """,
+        ticket_rows
+    )
+
+    # 6. Fetch created ticket IDs to attach Worksheet, Messages, and Audit rows
+    cursor.execute("SELECT id, client_id, agent_id, status, priority, created_at FROM tickets ORDER BY id ASC;")
+    all_tickets = cursor.fetchall()
+
+    worksheet_rows = []
+    audit_rows = []
+    message_rows = []
+
+    for t in all_tickets:
+        t_id = t["id"]
+        c_id = t["client_id"]
+        a_id = t["agent_id"]
+        st = t["status"]
+        pr = t["priority"]
+        cr_at = t["created_at"]
+
+        # Initial audit row: created
+        audit_rows.append((t_id, "client", c_id, "created", None, "open", cr_at))
+
+        # Initial message from client (ticket opening statement)
+        message_rows.append((t_id, c_id, "client", "Hello support team, please assist with this issue as soon as possible.", "public", cr_at))
+
+        if a_id:
+            # Worksheet entry
+            reason = "escalation" if st == "escalated" else "round_robin"
+            assigned_by = admin_id if st == "escalated" else a_id
+            worksheet_rows.append((t_id, a_id, assigned_by, reason, st, cr_at))
+            audit_rows.append((t_id, "system", a_id, "assigned", None, str(a_id), cr_at))
+
+            # Threaded response if ticket progressed
+            if st in ("pending", "solved", "closed"):
+                reply_time = (datetime.fromisoformat(cr_at) + timedelta(minutes=45)).isoformat()
+                message_rows.append((t_id, a_id, "agent", "We have investigated and applied the initial configuration patch. Please verify.", "public", reply_time))
+                message_rows.append((t_id, a_id, "agent", "Internal note: verified logs, database latency is back to normal.", "internal", reply_time))
+
+            if st == "solved":
+                audit_rows.append((t_id, "agent", a_id, "status_change", "open", "solved", cr_at))
+            elif st == "closed":
+                audit_rows.append((t_id, "agent", a_id, "status_change", "solved", "closed", cr_at))
+            elif st == "escalated":
+                audit_rows.append((t_id, "system", admin_id, "escalated", pr, "urgent", cr_at))
+
+    cursor.executemany(
+        "INSERT INTO worksheet (ticket_id, agent_id, assigned_by, reason, status, created_at) VALUES (?, ?, ?, ?, ?, ?);",
         worksheet_rows
     )
 
-    # 8. Seed Audit Trail
-    audit_rows = [
-        (t1_id, "client", client_map["Acme Corp"], "created", None, "open"),
-        (t1_id, "agent", agent_map["Admin Asha"], "assigned", None, "Priya Agent"),
-        (t2_id, "client", client_map["Globex International"], "created", None, "open"),
-        (t2_id, "agent", agent_map["Rahul Agent"], "status_change", "open", "pending"),
-        (t4_id, "agent", agent_map["Priya Agent"], "status_change", "open", "solved"),
-    ]
     cursor.executemany(
-        """
-        INSERT INTO audit (ticket_id, actor_type, actor_id, action, old_value, new_value)
-        VALUES (?, ?, ?, ?, ?, ?);
-        """,
+        "INSERT INTO audit (ticket_id, actor_type, actor_id, action, old_value, new_value, created_at) VALUES (?, ?, ?, ?, ?, ?, ?);",
         audit_rows
     )
 
-    # 9. Set Round-Robin Pointer
+    cursor.executemany(
+        "INSERT INTO messages (ticket_id, sender_id, sender_type, text, visibility, created_at) VALUES (?, ?, ?, ?, ?, ?);",
+        message_rows
+    )
+
+    # 7. Initialize Round-Robin Pointer
     cursor.execute(
         "INSERT INTO system_settings (key, value) VALUES (?, ?);",
-        ("last_assigned_agent_id", str(agent_map["Rahul Agent"]))
+        ("last_assigned_agent_id", str(agent_ids[0]))
     )
 
     conn.commit()
     conn.close()
-    print("Database seeded successfully with 10 rows each in users, clients, customers, and agents!")
+    print("Database seeded successfully with 100 realistic tickets and supporting records!")
 
 
 if __name__ == "__main__":
