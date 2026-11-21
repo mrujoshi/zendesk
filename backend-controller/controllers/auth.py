@@ -7,17 +7,25 @@ import models
 from deps import Actor, bearer_token, current_actor
 from rules import RuleError
 from schemas import LoginRequest
-from security import SESSION_HOURS, hash_token, new_token, verify_password
+from security import SESSION_HOURS, hash_token, login_throttle, new_token, verify_password
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/login", summary="Log in as a user (of a client) or an agent; returns a bearer token")
 def login(body: LoginRequest):
-    user = models.find_for_login(body.user_type.value, body.email)
+    kind, email = body.user_type.value, body.email
+    # Brute-force protection: checked BEFORE the password, so a locked account can't be guessed
+    wait = login_throttle.seconds_locked(kind, email)
+    if wait:
+        raise RuleError(429, "too_many_attempts",
+                        f"Too many failed logins. Try again in {(wait + 59) // 60} minute(s)")
+    user = models.find_for_login(kind, email)
     # Same message for "no such email" and "wrong password": don't reveal which emails exist
     if not user or not verify_password(body.password, user["password_hash"]):
+        login_throttle.failed(kind, email)
         raise RuleError(401, "invalid_credentials", "Email or password is wrong")
+    login_throttle.succeeded(kind, email)
     if body.user_type.value == "agent" and not user["is_active"]:
         raise RuleError(403, "inactive", "This agent account is disabled")
 

@@ -61,6 +61,13 @@ def validation_error(_: Request, e: RequestValidationError):
         "error": "validation_error", "message": f"{field}: {first['msg']}"})
 
 
+@app.exception_handler(OverflowError)
+def number_too_large(_: Request, e: OverflowError):
+    # e.g. /api/tickets/99999999999999999999: Python accepts it, SQLite's 64-bit INTEGER can't hold it
+    return JSONResponse(status_code=422, content={
+        "error": "validation_error", "message": "A number in the request is too large"})
+
+
 @app.exception_handler(Exception)
 def unexpected(_: Request, e: Exception):
     log.exception("unhandled error")

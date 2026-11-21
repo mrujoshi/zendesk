@@ -182,6 +182,14 @@ Every change is one row in `audit`: **who** (`actor_type`, `actor_id`), **what**
 - **Read:** `GET /api/tickets/{id}/audit` (one ticket, oldest first) and `GET /api/audit` with filters `ticket_id, actor_type, actor_id, action, since, until, limit, offset` (newest first). Staff only; agents see only their linked clients.
 - **Reassign with a reason:** `POST /api/tickets/{id}/assign {"agent_id": 3, "note": "..."}` saves the note as an internal message and audits it.
 
+## Security (attack-tested)
+Tested against: SQL injection (login, filters, audit query, stored text), forged tokens, invented roles, privilege escalation, extra fields in requests, other-client (IDOR) access, oversized input, malformed JSON, script injection, and CORS from other sites. All return clean 4xx errors in one format; no stack traces or password hashes are ever returned.
+
+- **SQL:** user input only ever goes through `?` placeholders.
+- **Login lockout:** 5 wrong passwords for an account → **429** for 15 minutes, even with the right password. Unknown emails are counted too, so the lock reveals nothing about which emails exist. Existing sessions keep working. Tunable with `LOGIN_MAX_ATTEMPTS` / `LOGIN_LOCK_SECONDS`. Kept in memory (one server process); several servers would need a shared store.
+- **Numbers too large for SQLite** (e.g. `/api/tickets/99999999999999999999`) → **422**, not 500.
+- **Limits:** text ≤ 10,000 chars, id lists ≤ 1,000 items, page size ≤ 100 (audit ≤ 200).
+
 ## Errors
 
 Every error has one shape:
@@ -198,6 +206,7 @@ Every error has one shape:
 | 403 | Role not allowed |
 | 404 | Not found |
 | 409 | Duplicate email |
+| 429 | Too many failed logins (account locked for 15 minutes) |
 | 422 | Invalid input |
 | 500 | Unexpected error (logged, server keeps running) |
 
