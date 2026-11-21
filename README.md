@@ -64,7 +64,8 @@ The system enforces strict separation of concerns across layers:
 
 ## 🗄️ Database Schema & Data Model
 
-SQLite datastore located at `backend/zendesk.db` configured with `WAL` journal mode for zero read/write lock contention.
+SQLite datastore located at `backend/zendesk.db` configured with `WAL` journal mode for zero read/write lock contention.  
+👉 **Full visual diagram and entity relationships:** [ERD.md](file:///Users/mrudula/Projects/Zendesk/zendesk/ERD.md)
 
 | Table | Purpose | Key Columns |
 | :--- | :--- | :--- |
