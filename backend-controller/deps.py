@@ -1,10 +1,11 @@
-"""Who is calling. Demo identity via headers: X-Actor-Type (client/agent/admin) + X-Actor-Id."""
+"""Who is calling: reads 'Authorization: Bearer <token>' and loads the user from the session."""
 from dataclasses import dataclass
 
 from fastapi import Header
 
 import models
-from rules import RuleError
+from rules import RuleError, now
+from security import hash_token
 
 
 @dataclass
@@ -16,22 +17,27 @@ class Actor:
 SYSTEM = Actor("system", None)
 
 
-def current_actor(
-    x_actor_type: str = Header(..., description="client / agent / admin"),
-    x_actor_id: int = Header(...),
-) -> Actor:
-    if x_actor_type == "client":
-        if not models.get_client(x_actor_id):
-            raise RuleError(401, "unauthorized", "Unknown client")
-    elif x_actor_type in ("agent", "admin"):
-        agent = models.get_agent(x_actor_id)
-        if not agent or not agent["is_active"]:
-            raise RuleError(401, "unauthorized", "Unknown or inactive agent")
-        if x_actor_type == "admin" and agent["role"] != "admin":
-            raise RuleError(403, "forbidden", "Not an admin")
-    else:
-        raise RuleError(401, "unauthorized", "X-Actor-Type must be client, agent or admin")
-    return Actor(x_actor_type, x_actor_id)
+def bearer_token(authorization: str | None = Header(None)) -> str:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise RuleError(401, "unauthorized", "Login required (Authorization: Bearer <token>)")
+    return authorization.split(" ", 1)[1].strip()
+
+
+def current_actor(authorization: str | None = Header(None)) -> Actor:
+    token = bearer_token(authorization)
+    session = models.get_session(hash_token(token), now())
+    if not session:
+        raise RuleError(401, "unauthorized", "Session expired or invalid; please log in again")
+
+    if session["user_type"] == "client":
+        if not models.get_client(session["user_id"]):
+            raise RuleError(401, "unauthorized", "User no longer exists")
+        return Actor("client", session["user_id"])
+
+    agent = models.get_agent(session["user_id"])
+    if not agent or not agent["is_active"]:  # disabled agents are locked out immediately
+        raise RuleError(401, "unauthorized", "Agent account is disabled")
+    return Actor(agent["role"], agent["id"])  # 'agent' or 'admin'
 
 
 def require_staff(actor: Actor) -> None:

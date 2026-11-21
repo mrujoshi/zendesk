@@ -8,7 +8,11 @@ Run the backend: `.venv/bin/uvicorn main:app --reload`, then open http://127.0.0
 |---|---|
 | `init()` | create tables if missing (+ seed) |
 | `transaction()` | context manager: BEGIN / COMMIT / ROLLBACK |
-| `create_client(name, email)` / `create_agent(name, email, role)` | dict |
+| `create_client(name, email, password_hash)` / `create_agent(name, email, role, password_hash)` | dict **without** password_hash |
+| `find_for_login(user_type, email)` | row **with** password_hash (only function that returns it), or None |
+| `create_session(token_hash, user_type, user_id, expires_at)` | insert into `sessions` (see `sessions.sql`) |
+| `get_session(token_hash, now_iso)` | session dict if not revoked and not expired, else None |
+| `revoke_session(token_hash)` | set `revoked_at` |
 | `get_client(id)` / `get_agent(id)` | dict or None (agent has `role`, `is_active`) |
 | `email_exists(kind, email)` | bool (`kind` = "client" / "agent") |
 | `list_agents()` / `list_clients()` | list of dicts |
@@ -34,11 +38,13 @@ Remember `PRAGMA foreign_keys = ON` on every connection.
 
 ## For Mrunnayee (UI)
 
-Every request sends the headers `X-Actor-Type` (client / agent / admin) and `X-Actor-Id`.
-Demo users: admin id 1, agents 2 and 3, client id 1.
+Log in with `POST /api/auth/login {email, password, user_type}` → save `token`.
+Every request sends `Authorization: Bearer <token>`. On 401, send the user back to the login page.
+Demo (password `password123`): asha@demo.com (admin), priya@demo.com (agent) → user_type `agent`; ravi@demo.com → user_type `client`.
 
 | Method | URL | Who |
 |---|---|---|
+| POST | `/api/auth/login`, `/api/auth/logout`; GET `/api/auth/me` | anyone / logged in |
 | POST | `/api/clients` | anyone |
 | POST | `/api/agents` | admin |
 | GET | `/api/agents`, `/api/clients` | staff |
@@ -53,7 +59,7 @@ Demo users: admin id 1, agents 2 and 3, client id 1.
 | POST | `/api/escalations/run` | admin (demo button) |
 
 Errors always look like `{"error": "code", "message": "text"}`. Show `message` to the user.
-Codes: 400 rule broken, 401 unknown user, 403 not allowed, 404 not found, 409 duplicate, 422 bad input.
+Codes: 400 rule broken, 401 not logged in / token expired, 403 not allowed, 404 not found, 409 duplicate, 422 bad input.
 
 ## Rules (in `rules.py`)
 - Status moves: open→pending/solved, pending→open/solved, solved→open/closed, closed→none

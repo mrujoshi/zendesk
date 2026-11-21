@@ -33,7 +33,10 @@ React (V)  ──HTTP──>  Controller (C)  ──function calls──>  Model
 | `controllers/reports.py` | Daily report, manual escalation trigger |
 | `constants.py` | Fixed values as Enums: status, priority, role, visibility, allowed moves, SLA. **No status table** |
 | `schemas.py` | Request bodies (uses the Enums from `constants.py`) |
-| `deps.py` | Current actor from headers, role checks |
+| `controllers/auth.py` | Login, logout, me |
+| `deps.py` | Current user from the bearer token, role checks |
+| `security.py` | Password hashing, token creation and hashing |
+| `sessions.sql` | `sessions` table to add to the Model's schema |
 | `rules.py` | Pure business rules (no DB, no FastAPI) |
 | `models.py` | **Temporary in-memory stub.** Replaced by the SQLite Model at merge |
 | `CONTRACT.md` | Function list for the Model, endpoint list for the UI |
@@ -53,19 +56,34 @@ For a quick escalation demo, run with short SLAs:
 SLA_UNIT=minutes .venv/bin/uvicorn main:app --reload
 ```
 
-## Identity (demo)
+## Login (sessions)
 
-Every request sends two headers:
-- `X-Actor-Type`: `client`, `agent` or `admin`
-- `X-Actor-Id`: the user's id
+```
+1. POST /api/auth/login  {email, password, user_type: "client" | "agent"}
+2. API checks the password hash (and is_active for agents)
+3. API returns {token, expires_at, user}
+4. React sends on every call:  Authorization: Bearer <token>
+5. POST /api/auth/logout revokes the token
+```
 
-Seeded demo users: admin **1** (Admin Asha), agents **2** (Priya) and **3** (Rahul), client **1** (Ravi).
-In production this would be a real login (token / session).
+- Passwords: salted PBKDF2 (`security.py`). Old plain SHA-256 hashes from `seed.py` are still accepted.
+- Tokens: random (`secrets.token_urlsafe`); only a **SHA-256 hash** is stored in `sessions`.
+- Tokens expire after **8 hours**. Logout sets `revoked_at`.
+- A disabled agent (`is_active = 0`) is locked out on the next request.
+- Wrong email and wrong password return the same 401, so the API doesn't reveal which emails exist.
+- Table: see `sessions.sql`.
+
+Demo users (password `password123`): admin `asha@demo.com`, agents `priya@demo.com` / `rahul@demo.com` (user_type `agent`), client `ravi@demo.com` (user_type `client`).
+
+In `/docs`: call login, copy the token, then fill the `authorization` field on each call with `Bearer <token>`.
 
 ## Endpoints
 
 | Method | URL | Who | Purpose |
 |---|---|---|---|
+| POST | `/api/auth/login` | anyone | Log in, get a token |
+| POST | `/api/auth/logout` | logged in | Revoke token |
+| GET | `/api/auth/me` | logged in | Current user |
 | POST | `/api/clients` | anyone | Register a client |
 | POST | `/api/agents` | admin | Create an agent |
 | GET | `/api/agents`, `/api/clients` | staff | Lists for dropdowns |
