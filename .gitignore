@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# SQLite temporary files
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Node / React
+node_modules/
+dist/
+build/
+.npm/
+
+# OS / Editor
+.DS_Store
+.vscode/
+.idea/
