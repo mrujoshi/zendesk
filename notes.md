@@ -50,7 +50,16 @@
      * `sla_breached` (Resolution target missed)
      * `escalated` (Priority escalated to Tier 2 / Admin)
 
-5. **Tickets** (Core entity with explicit relational foreign keys)
+5. **Priority** (Ticket Severity & SLA Definitions)
+   * `id` (INTEGER, PK, AUTOINCREMENT)
+   * `name` (TEXT, UNIQUE, NOT NULL)
+   * *Allowed Values:*
+     * `low` (SLA: 48h)
+     * `normal` (SLA: 24h)
+     * `high` (SLA: 4h)
+     * `urgent` (SLA: 1h)
+
+6. **Tickets** (Core entity with explicit relational foreign keys)
    * `id` (INTEGER, PK, AUTOINCREMENT)
    * `title` (TEXT, NOT NULL)
    * `description` (TEXT, NOT NULL)
@@ -65,7 +74,7 @@
    * `created_at` (TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
    * `updated_at` (TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
 
-6. **Messages** (Threaded conversation with polymorphic sender & chronological ordering)
+7. **Messages** (Threaded conversation with polymorphic sender & chronological ordering)
    * `id` (INTEGER, PK, AUTOINCREMENT)
    * `ticket_id` (INTEGER, NOT NULL, FK -> Tickets.id ON DELETE CASCADE)
    * `sender_id` (INTEGER, NOT NULL)
@@ -75,7 +84,7 @@
    * `created_at` (TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
    * *Ordering:* Always queried with `ORDER BY created_at ASC, id ASC`.
 
-7. **Worksheet** (Purpose: Active Agent Queue, Workload Management & Assignment History)
+8. **Worksheet** (Purpose: Active Agent Queue, Workload Management & Assignment History)
    * `id` (INTEGER, PK, AUTOINCREMENT)
    * `ticket_id` (INTEGER, NOT NULL, FK -> Tickets.id ON DELETE CASCADE)
    * `agent_id` (INTEGER, FK -> Agent.id ON DELETE SET NULL)
@@ -85,7 +94,7 @@
    * `created_at` (TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
    * *Purpose & Recommendation:* Decouples current ticket status from assignment history. When a ticket is reassigned or escalated, a new row is appended to Worksheet. This guarantees a complete audit of who held the ticket, enables per-agent active workload calculations, and ensures tickets can be reassigned without losing historical context.
 
-8. **Audit Trail** (Append-only compliance log)
+9. **Audit Trail** (Append-only compliance log)
    * `id` (INTEGER, PK, AUTOINCREMENT)
    * `ticket_id` (INTEGER, NOT NULL, FK -> Tickets.id ON DELETE CASCADE)
    * `actor_type` (TEXT: `'client'`, `'agent'`, `'admin'`)
@@ -95,7 +104,7 @@
    * `new_value` (TEXT, NULLABLE)
    * `created_at` (TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
 
-9. **System Settings** (Persistent runtime configuration)
+10. **System Settings** (Persistent runtime configuration)
    * `key` (TEXT, PK)
    * `value` (TEXT, NOT NULL)
    * *Used for:* `last_assigned_agent_id` for round-robin pointer persistence across server restarts.

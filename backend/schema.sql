@@ -43,7 +43,17 @@ CREATE TABLE IF NOT EXISTS statuses (
 INSERT OR IGNORE INTO statuses (name) VALUES 
 ('open'), ('pending'), ('solved'), ('closed'), ('sla_breached'), ('escalated');
 
--- 5. Tickets Table (Core entity with explicit foreign keys to client & current agent)
+-- 5. Priority Table (High, low, normal, urgent)
+CREATE TABLE IF NOT EXISTS priorities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL
+);
+
+-- Seed static priorities
+INSERT OR IGNORE INTO priorities (name) VALUES 
+('low'), ('normal'), ('high'), ('urgent');
+
+-- 6. Tickets Table (Core entity with explicit foreign keys to client & current agent)
 CREATE TABLE IF NOT EXISTS tickets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
@@ -62,7 +72,7 @@ CREATE TABLE IF NOT EXISTS tickets (
     FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE SET NULL
 );
 
--- 6. Messages Table (Ordered conversation thread with sender_type)
+-- 7. Messages Table (Ordered conversation thread with sender_type)
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ticket_id INTEGER NOT NULL,
