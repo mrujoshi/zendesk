@@ -31,6 +31,7 @@ const PATHS = {
   history: 'M3 3v5h5M3.05 13A9 9 0 1 0 6 5.3L3 8M12 7v5l4 2',
   user: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z',
   zap: 'M13 2 3 14h9l-1 8 10-12h-9l1-8z',
+  sparkles: 'M12 3l1.9 5.8L19.7 10.7l-5.8 1.9L12 18.4l-1.9-5.8-5.8-1.9 5.8-1.9zM5 3v4M3 5h4M19 17v4M17 19h4',
 };
 
 export function Icon({ name, size = 16, className = '' }) {

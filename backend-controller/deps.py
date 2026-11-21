@@ -10,8 +10,9 @@ from security import hash_token
 
 @dataclass
 class Actor:
-    type: str  # client / agent / admin / system
+    type: str  # user / agent / admin / system
     id: int | None
+    client_id: int | None = None  # set for users: the only client whose data they may see
 
 
 # System actions (round-robin, escalation). audit.actor_id is NOT NULL, so the system uses id 0.
@@ -30,15 +31,20 @@ def current_actor(authorization: str | None = Header(None)) -> Actor:
     if not session:
         raise RuleError(401, "unauthorized", "Session expired or invalid; please log in again")
 
-    if session["user_type"] == "client":
-        if not models.get_client(session["user_id"]):
+    if session["user_type"] == "user":
+        user = models.get_user(session["user_id"])
+        if not user:
             raise RuleError(401, "unauthorized", "User no longer exists")
-        return Actor("client", session["user_id"])
+        return Actor("user", user["id"], user["client_id"])
 
     agent = models.get_agent(session["user_id"])
     if not agent or not agent["is_active"]:  # disabled agents are locked out immediately
         raise RuleError(401, "unauthorized", "Agent account is disabled")
     return Actor(agent["role"], agent["id"])  # 'agent' or 'admin'
+
+
+def is_staff(actor: Actor) -> bool:
+    return actor.type in ("agent", "admin")
 
 
 def require_staff(actor: Actor) -> None:

@@ -1,8 +1,7 @@
 """
 Seed script to populate Mini-Zendesk SQLite database.
 Seeds:
-- 10 rows in Users
-- 10 rows in Clients
+- 10 Clients (companies) and 12 Users (people who log in; each belongs to one client)
 - 10 rows in Customers
 - 10 rows in Agents
 - 100 realistic Tickets with varied statuses and priorities
@@ -53,7 +52,19 @@ SLA_HOURS = {
 }
 
 
+ALL_TABLES = ["sessions", "audit", "worksheet", "messages", "tickets", "users", "customers",
+              "agents", "clients", "statuses", "priorities", "system_settings"]
+
+
 def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
+    # Rebuild from schema.sql so schema changes (e.g. users.client_id) reach an existing DB file.
+    conn = get_db_connection(db_path)
+    conn.execute("PRAGMA foreign_keys = OFF;")
+    for table in ALL_TABLES:
+        conn.execute(f"DROP TABLE IF EXISTS {table};")
+    conn.commit()
+    conn.close()
+
     init_db(db_path)
     conn = get_db_connection(db_path)
     cursor = conn.cursor()
@@ -72,37 +83,56 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
 
     default_pwd_hash = hash_password("password123")
 
-    # 1. Seed 10 Users
-    users = [
-        ("Aarav Patel", "Employee", default_pwd_hash),
-        ("Aditi Sharma", "Manager", default_pwd_hash),
-        ("Rohan Gupta", "Support", default_pwd_hash),
-        ("Sanya Verma", "Finance", default_pwd_hash),
-        ("Vikram Malhotra", "HR", default_pwd_hash),
-        ("Ananya Deshmukh", "Operations", default_pwd_hash),
-        ("Karan Mehta", "Developer", default_pwd_hash),
-        ("Pooja Kulkarni", "QA", default_pwd_hash),
-        ("Siddharth Rao", "DevOps", default_pwd_hash),
-        ("Neha Joshi", "Product", default_pwd_hash),
-    ]
-    cursor.executemany("INSERT INTO users (name, category, password_hash) VALUES (?, ?, ?);", users)
-
-    # 2. Seed 10 Clients
+    # 1. Seed 10 Clients (companies). Clients don't log in, so no password.
     clients = [
-        ("Acme Corp", "support@acme.com", default_pwd_hash),
-        ("Globex International", "it@globex.com", default_pwd_hash),
-        ("Initech Systems", "help@initech.com", default_pwd_hash),
-        ("Umbrella Health", "contact@umbrella.com", default_pwd_hash),
-        ("Stark Industries", "support@stark.com", default_pwd_hash),
-        ("Wayne Enterprises", "helpdesk@wayne.com", default_pwd_hash),
-        ("Cyberdyne AI", "ops@cyberdyne.com", default_pwd_hash),
-        ("Soylent Corp", "client@soylent.com", default_pwd_hash),
-        ("Massive Dynamic", "contact@massivedynamic.com", default_pwd_hash),
-        ("Hooli Cloud", "billing@hooli.com", default_pwd_hash),
+        ("Acme Corp", "support@acme.com"),
+        ("Globex International", "it@globex.com"),
+        ("Initech Systems", "help@initech.com"),
+        ("Umbrella Health", "contact@umbrella.com"),
+        ("Stark Industries", "support@stark.com"),
+        ("Wayne Enterprises", "helpdesk@wayne.com"),
+        ("Cyberdyne AI", "ops@cyberdyne.com"),
+        ("Soylent Corp", "client@soylent.com"),
+        ("Massive Dynamic", "contact@massivedynamic.com"),
+        ("Hooli Cloud", "billing@hooli.com"),
     ]
-    cursor.executemany("INSERT INTO clients (name, email, password_hash) VALUES (?, ?, ?);", clients)
+    cursor.executemany("INSERT INTO clients (name, email, password_hash) VALUES (?, ?, '');", clients)
+    cursor.execute("SELECT id, email FROM clients ORDER BY id ASC;")
+    client_rows = cursor.fetchall()
 
-    # 3. Seed 10 Customers
+    # 2. Seed 12 Users, each belonging to one client (email on the client's domain).
+    #    Acme and Globex have two users each, to show colleagues sharing their company's tickets.
+    users = [
+        # (client index, name, category)
+        (0, "Aarav Patel", "Employee"),
+        (0, "Aditi Sharma", "Manager"),
+        (1, "Rohan Gupta", "Support"),
+        (1, "Sanya Verma", "Finance"),
+        (2, "Vikram Malhotra", "HR"),
+        (3, "Ananya Deshmukh", "Operations"),
+        (4, "Karan Mehta", "Developer"),
+        (5, "Pooja Kulkarni", "QA"),
+        (6, "Siddharth Rao", "DevOps"),
+        (7, "Meera Iyer", "Procurement"),
+        (8, "Arjun Nair", "Engineering"),
+        (9, "Neha Joshi", "Product"),
+    ]
+    user_rows = []
+    for idx, name, category in users:
+        client = client_rows[idx]
+        domain = client["email"].split("@", 1)[1]
+        email = f"{name.split()[0].lower()}@{domain}"
+        user_rows.append((client["id"], name, email, category, default_pwd_hash))
+    cursor.executemany(
+        "INSERT INTO users (client_id, name, email, category, password_hash) VALUES (?, ?, ?, ?, ?);",
+        user_rows,
+    )
+    cursor.execute("SELECT id, client_id FROM users ORDER BY id ASC;")
+    users_by_client = {}
+    for row in cursor.fetchall():
+        users_by_client.setdefault(row["client_id"], []).append(row["id"])
+
+    # 3. Seed 10 Customers (legacy table, not used by the API)
     customers = [
         ("Ravi Kumar", "ravi@customer.com", default_pwd_hash),
         ("Alice Johnson", "alice@clientcorp.com", default_pwd_hash),
@@ -181,6 +211,9 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
         status = statuses_pool[i]
         priority = priorities_pool[i]
         client_id = client_ids[i % len(client_ids)]
+        # The ticket is raised by one of that client's users (alternating when there are several).
+        client_users = users_by_client[client_id]
+        user_id = client_users[(i // len(client_ids)) % len(client_users)]
 
         # Assign agent: leave ~10 tickets unassigned (agent_id = None) to test Unassigned views
         if i % 10 == 0 and status in ("open", "pending"):
@@ -209,6 +242,7 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
             status,
             priority,
             client_id,
+            user_id,
             agent_id,
             is_escalated,
             due_at,
@@ -220,15 +254,15 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
     cursor.executemany(
         """
         INSERT INTO tickets (
-            title, description, status, priority, client_id, agent_id,
+            title, description, status, priority, client_id, user_id, agent_id,
             is_escalated, due_at, solved_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """,
         ticket_rows
     )
 
     # 6. Fetch created ticket IDs to attach Worksheet, Messages, and Audit rows
-    cursor.execute("SELECT id, client_id, agent_id, status, priority, created_at FROM tickets ORDER BY id ASC;")
+    cursor.execute("SELECT id, client_id, user_id, agent_id, status, priority, created_at FROM tickets ORDER BY id ASC;")
     all_tickets = cursor.fetchall()
 
     worksheet_rows = []
@@ -237,17 +271,17 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
 
     for t in all_tickets:
         t_id = t["id"]
-        c_id = t["client_id"]
+        u_id = t["user_id"]
         a_id = t["agent_id"]
         st = t["status"]
         pr = t["priority"]
         cr_at = t["created_at"]
 
-        # Initial audit row: created
-        audit_rows.append((t_id, "client", c_id, "created", None, "open", cr_at))
+        # Initial audit row: created by the client's user
+        audit_rows.append((t_id, "user", u_id, "created", None, "open", cr_at))
 
-        # Initial message from client (ticket opening statement)
-        message_rows.append((t_id, c_id, "client", "Hello support team, please assist with this issue as soon as possible.", "public", cr_at))
+        # Initial message from that user (ticket opening statement)
+        message_rows.append((t_id, u_id, "user", "Hello support team, please assist with this issue as soon as possible.", "public", cr_at))
 
         if a_id:
             # Worksheet entry

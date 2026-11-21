@@ -4,22 +4,27 @@
 
 PRAGMA foreign_keys = ON;
 
--- 1. General User Table
-CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    category TEXT NOT NULL,
-    password_hash TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- 2. Client Table (Requesters / Companies filing tickets)
+-- 1. Client Table (Companies / accounts that raise tickets). Clients don't log in;
+--    their users do. password_hash is kept for compatibility and left empty ('') for new clients.
 CREATE TABLE IF NOT EXISTS clients (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     email TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
+    password_hash TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 2. User Table (People who log in and raise tickets). Every user belongs to exactly one client,
+--    and can only see that client's tickets.
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    category TEXT NOT NULL DEFAULT 'Employee',   -- job role at the client, e.g. 'Manager', 'Finance'
+    password_hash TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE RESTRICT
 );
 
 -- 3. Customer Table (End Customers filing tickets)
@@ -69,7 +74,8 @@ CREATE TABLE IF NOT EXISTS tickets (
     description TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'pending', 'solved', 'closed', 'sla_breached', 'escalated')),
     priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
-    client_id INTEGER NOT NULL,
+    client_id INTEGER NOT NULL,              -- the client (company) the ticket belongs to
+    user_id INTEGER,                         -- the user who raised it (NULL for legacy rows)
     agent_id INTEGER,
     is_escalated INTEGER NOT NULL DEFAULT 0 CHECK(is_escalated IN (0, 1)),
     attachment_path TEXT,
@@ -78,6 +84,7 @@ CREATE TABLE IF NOT EXISTS tickets (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE RESTRICT,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
     FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE SET NULL
 );
 
@@ -111,7 +118,7 @@ CREATE TABLE IF NOT EXISTS worksheet (
 CREATE TABLE IF NOT EXISTS audit (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ticket_id INTEGER NOT NULL,
-    actor_type TEXT NOT NULL, -- 'client', 'agent', 'admin'
+    actor_type TEXT NOT NULL, -- 'user', 'agent', 'admin', 'system'
     actor_id INTEGER NOT NULL,
     action TEXT NOT NULL,     -- 'created', 'assigned', 'status_change', 'message_added', 'escalated'
     old_value TEXT,
@@ -130,8 +137,8 @@ CREATE TABLE IF NOT EXISTS system_settings (
 CREATE TABLE IF NOT EXISTS sessions (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     token_hash  TEXT NOT NULL UNIQUE,      -- SHA-256 of the token; raw token never stored
-    user_type   TEXT NOT NULL CHECK (user_type IN ('client', 'agent')),
-    user_id     INTEGER NOT NULL,          -- references clients.id or agents.id
+    user_type   TEXT NOT NULL CHECK (user_type IN ('user', 'agent')),
+    user_id     INTEGER NOT NULL,          -- references users.id or agents.id
     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     expires_at  TIMESTAMP NOT NULL,        -- login time + 8 hours
     revoked_at  TIMESTAMP                  -- set on logout; NULL = active
@@ -141,6 +148,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status);
 CREATE INDEX IF NOT EXISTS idx_tickets_agent ON tickets(agent_id);
 CREATE INDEX IF NOT EXISTS idx_tickets_client ON tickets(client_id);
+CREATE INDEX IF NOT EXISTS idx_tickets_user ON tickets(user_id);
+CREATE INDEX IF NOT EXISTS idx_users_client ON users(client_id);
 CREATE INDEX IF NOT EXISTS idx_tickets_priority ON tickets(priority);
 CREATE INDEX IF NOT EXISTS idx_messages_ticket_order ON messages(ticket_id, created_at ASC, id ASC);
 CREATE INDEX IF NOT EXISTS idx_worksheet_ticket ON worksheet(ticket_id);

@@ -12,7 +12,7 @@ from security import SESSION_HOURS, hash_token, new_token, verify_password
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.post("/login", summary="Log in as client or agent; returns a bearer token")
+@router.post("/login", summary="Log in as a user (of a client) or an agent; returns a bearer token")
 def login(body: LoginRequest):
     user = models.find_for_login(body.user_type.value, body.email)
     # Same message for "no such email" and "wrong password": don't reveal which emails exist
@@ -24,12 +24,7 @@ def login(body: LoginRequest):
     token = new_token()
     expires = (datetime.now(timezone.utc) + timedelta(hours=SESSION_HOURS)).isoformat(timespec="seconds")
     models.create_session(hash_token(token), body.user_type.value, user["id"], expires)
-    role = user.get("role", "client")
-    return {
-        "token": token,
-        "expires_at": expires,
-        "user": {"id": user["id"], "name": user["name"], "email": user["email"], "role": role},
-    }
+    return {"token": token, "expires_at": expires, "user": _profile(body.user_type.value, user["id"])}
 
 
 @router.post("/logout", summary="Revoke the current token")
@@ -40,5 +35,14 @@ def logout(token: str = Depends(bearer_token)):
 
 @router.get("/me", summary="Who is logged in")
 def me(actor: Actor = Depends(current_actor)):
-    user = models.get_client(actor.id) if actor.type == "client" else models.get_agent(actor.id)
-    return {"id": user["id"], "name": user["name"], "email": user["email"], "role": actor.type}
+    return _profile("user" if actor.type == "user" else "agent", actor.id)
+
+
+def _profile(user_type: str, user_id: int) -> dict:
+    """role is 'user', 'agent' or 'admin'. Users also get their client (company)."""
+    if user_type == "user":
+        u = models.get_user(user_id)
+        return {"id": u["id"], "name": u["name"], "email": u["email"], "role": "user",
+                "category": u["category"], "client_id": u["client_id"], "client_name": u["client_name"]}
+    a = models.get_agent(user_id)
+    return {"id": a["id"], "name": a["name"], "email": a["email"], "role": a["role"]}

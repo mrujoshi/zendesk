@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Query
 
 import models
 import rules
-from deps import SYSTEM, Actor, current_actor, require_staff
+from deps import SYSTEM, Actor, current_actor, is_staff, require_staff
 from rules import RuleError
 from constants import Priority, Status, Visibility
 from schemas import AssignRequest, MessageCreate, StatusUpdate, TicketCreate
@@ -11,10 +11,15 @@ from schemas import AssignRequest, MessageCreate, StatusUpdate, TicketCreate
 router = APIRouter(tags=["tickets"])
 
 
+def client_scope(actor: Actor) -> int | None:
+    """Which client's tickets this actor may see: their own client for users, all (None) for staff."""
+    return None if is_staff(actor) else actor.client_id
+
+
 def get_or_404(ticket_id: int, actor: Actor) -> dict:
     t = models.get_ticket(ticket_id)
-    # A client asking for someone else's ticket gets 404, not 403 (don't reveal it exists)
-    if not t or (actor.type == "client" and t["client_id"] != actor.id):
+    # A user asking for another client's ticket gets 404, not 403 (don't reveal it exists)
+    if not t or (not is_staff(actor) and t["client_id"] != actor.client_id):
         raise RuleError(404, "not_found", "Ticket not found")
     return t
 
@@ -29,13 +34,14 @@ def assign_round_robin(ticket_id: int) -> int | None:
     return agent_id
 
 
-@router.post("/tickets", status_code=201, summary="Create ticket (client) + auto-assign round-robin")
+@router.post("/tickets", status_code=201, summary="Create ticket (user of a client) + auto-assign round-robin")
 def create_ticket(body: TicketCreate, actor: Actor = Depends(current_actor)):
-    if actor.type != "client":
-        raise RuleError(403, "forbidden", "Only clients create tickets")
+    if actor.type != "user":
+        raise RuleError(403, "forbidden", "Only client users create tickets")
     p = body.priority.value
     with models.transaction():
-        t = models.create_ticket(actor.id, body.title, body.description, p, rules.due_at(p))
+        # The ticket belongs to the user's client, so their colleagues at that client can see it too.
+        t = models.create_ticket(actor.client_id, actor.id, body.title, body.description, p, rules.due_at(p))
         models.audit(t["id"], actor.type, actor.id, "created", None, "open")
         assign_round_robin(t["id"])
     return models.get_ticket(t["id"])
@@ -56,7 +62,7 @@ def list_tickets(
         priority=priority.value if priority else None,
         escalated=escalated,
         agent_id=agent_id,
-        client_id=actor.id if actor.type == "client" else None,  # clients see only their own
+        client_id=client_scope(actor),  # users only ever see their own client's tickets
         limit=limit,
         offset=offset,
     )
@@ -65,7 +71,7 @@ def list_tickets(
 @router.get("/tickets/{ticket_id}", summary="Ticket detail with message thread")
 def ticket_detail(ticket_id: int, actor: Actor = Depends(current_actor)):
     t = get_or_404(ticket_id, actor)
-    t["messages"] = models.get_messages(ticket_id, include_internal=actor.type != "client")
+    t["messages"] = models.get_messages(ticket_id, include_internal=is_staff(actor))
     return t
 
 
@@ -104,7 +110,7 @@ def add_message(ticket_id: int, body: MessageCreate, actor: Actor = Depends(curr
     internal = body.visibility == Visibility.INTERNAL
     if internal:
         require_staff(actor)
-    author_type = "client" if actor.type == "client" else "agent"
+    author_type = "agent" if is_staff(actor) else "user"
     # Checked even for internal notes: nobody writes on a closed ticket
     new_status = rules.status_after_reply(t["status"], author_type)
     with models.transaction():
@@ -118,7 +124,7 @@ def add_message(ticket_id: int, body: MessageCreate, actor: Actor = Depends(curr
 @router.get("/tickets/{ticket_id}/messages", summary="Message thread, oldest first")
 def list_messages(ticket_id: int, actor: Actor = Depends(current_actor)):
     get_or_404(ticket_id, actor)
-    return models.get_messages(ticket_id, include_internal=actor.type != "client")
+    return models.get_messages(ticket_id, include_internal=is_staff(actor))
 
 
 @router.get("/tickets/{ticket_id}/audit", summary="Audit trail (staff only)")

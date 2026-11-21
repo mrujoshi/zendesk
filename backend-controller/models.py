@@ -38,8 +38,24 @@ def _conn() -> sqlite3.Connection:
     return conn
 
 
+def _columns(conn, table):
+    return {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+
+
 def init():
     """Create tables if missing (safe to run every start). Seed data: python3 backend/seed.py"""
+    # CREATE TABLE IF NOT EXISTS can't add columns to an existing DB file. If the file predates
+    # users-belong-to-clients, stop with a clear message instead of a cryptic SQL error.
+    conn = database.get_db_connection(DB_PATH)
+    try:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        stale = ("users" in tables and "client_id" not in _columns(conn, "users")) or (
+            "tickets" in tables and "user_id" not in _columns(conn, "tickets"))
+    finally:
+        conn.close()
+    if stale:
+        raise RuntimeError(f"{DB_PATH} uses an old schema (users have no client_id). "
+                           "Rebuild it with: cd backend && python3 seed.py")
     database.init_db(DB_PATH)
 
 
@@ -117,11 +133,33 @@ def _message_out(r):
     return d
 
 
-# ---------- users ----------
-def create_client(name, email, password_hash):
-    cur = _exec("INSERT INTO clients (name, email, password_hash, created_at) VALUES (?, ?, ?, ?)",
-                (name, email, password_hash, now()))
+# ---------- clients (companies) and users (people at a client) ----------
+def create_client(name, email):
+    """Clients don't log in (their users do), so password_hash stays ''."""
+    cur = _exec("INSERT INTO clients (name, email, password_hash, created_at) VALUES (?, ?, '', ?)",
+                (name, email, now()))
     return get_client(cur.lastrowid)
+
+
+USER_SELECT = ("SELECT u.id, u.client_id, u.name, u.email, u.category, u.created_at, c.name AS client_name "
+               "FROM users u JOIN clients c ON c.id = u.client_id")
+
+
+def create_user(client_id, name, email, category, password_hash):
+    cur = _exec("INSERT INTO users (client_id, name, email, category, password_hash, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)", (client_id, name, email, category, password_hash, now()))
+    return get_user(cur.lastrowid)
+
+
+def get_user(user_id):
+    """User dict with client_id and client_name (no password_hash)."""
+    return _row(_one(USER_SELECT + " WHERE u.id = ?", (user_id,)))
+
+
+def list_users(client_id=None):
+    if client_id:
+        return [_row(r) for r in _all(USER_SELECT + " WHERE u.client_id = ? ORDER BY u.name", (client_id,))]
+    return [_row(r) for r in _all(USER_SELECT + " ORDER BY c.name, u.name")]
 
 
 def create_agent(name, email, role, password_hash):
@@ -138,16 +176,19 @@ def get_agent(agent_id):
     return _agent_out(_one("SELECT * FROM agents WHERE id = ?", (agent_id,)))
 
 
+LOGIN_TABLES = {"user": "users", "agent": "agents"}
+EMAIL_TABLES = {"user": "users", "agent": "agents", "client": "clients"}
+
+
 def find_for_login(user_type, email):
-    """The only function that returns password_hash."""
-    table = "clients" if user_type == "client" else "agents"
-    r = _one(f"SELECT * FROM {table} WHERE lower(email) = lower(?)", (email,))
+    """The only function that returns password_hash. user_type: 'user' or 'agent'."""
+    r = _one(f"SELECT * FROM {LOGIN_TABLES[user_type]} WHERE lower(email) = lower(?)", (email,))
     return _row(r, drop=()) if r else None
 
 
 def email_exists(kind, email):
-    table = "clients" if kind == "client" else "agents"
-    return _one(f"SELECT 1 FROM {table} WHERE lower(email) = lower(?)", (email,)) is not None
+    """kind: 'user', 'agent' or 'client'."""
+    return _one(f"SELECT 1 FROM {EMAIL_TABLES[kind]} WHERE lower(email) = lower(?)", (email,)) is not None
 
 
 def list_agents():
@@ -155,7 +196,11 @@ def list_agents():
 
 
 def list_clients():
-    return [_row(r) for r in _all("SELECT * FROM clients ORDER BY id")]
+    """Clients with how many users and tickets each has."""
+    return [_row(r) for r in _all(
+        "SELECT c.*, (SELECT COUNT(*) FROM users u WHERE u.client_id = c.id) AS user_count, "
+        "(SELECT COUNT(*) FROM tickets t WHERE t.client_id = c.id) AS ticket_count "
+        "FROM clients c ORDER BY c.name")]
 
 
 def active_agent_ids():
@@ -195,32 +240,42 @@ def set_last_assigned(agent_id):
 
 
 # ---------- tickets ----------
-def create_ticket(client_id, title, description, priority, due_at):
+# Every ticket read includes display names, so the UI never needs extra lookups
+# (and users, who can't list agents or other clients, still see readable names).
+TICKET_SELECT = ("SELECT t.*, c.name AS client_name, u.name AS user_name, u.email AS user_email, "
+                 "a.name AS agent_name FROM tickets t "
+                 "JOIN clients c ON c.id = t.client_id "
+                 "LEFT JOIN users u ON u.id = t.user_id "
+                 "LEFT JOIN agents a ON a.id = t.agent_id")
+
+
+def create_ticket(client_id, user_id, title, description, priority, due_at):
     ts = now()
-    cur = _exec("INSERT INTO tickets (title, description, status, priority, client_id, due_at, created_at, updated_at) "
-                "VALUES (?, ?, 'open', ?, ?, ?, ?, ?)", (title, description, priority, client_id, due_at, ts, ts))
+    cur = _exec("INSERT INTO tickets (title, description, status, priority, client_id, user_id, due_at, "
+                "created_at, updated_at) VALUES (?, ?, 'open', ?, ?, ?, ?, ?, ?)",
+                (title, description, priority, client_id, user_id, due_at, ts, ts))
     return get_ticket(cur.lastrowid)
 
 
 def get_ticket(ticket_id):
-    return _ticket_out(_one("SELECT * FROM tickets WHERE id = ?", (ticket_id,)))
+    return _ticket_out(_one(TICKET_SELECT + " WHERE t.id = ?", (ticket_id,)))
 
 
 def list_tickets(status, priority, escalated, agent_id, client_id, limit, offset):
     where, args = [], []
     if status:
-        where.append("status = ?"); args.append(status)
+        where.append("t.status = ?"); args.append(status)
     if priority:
-        where.append("priority = ?"); args.append(priority)
+        where.append("t.priority = ?"); args.append(priority)
     if escalated is not None:
-        where.append("is_escalated = ?"); args.append(1 if escalated else 0)
+        where.append("t.is_escalated = ?"); args.append(1 if escalated else 0)
     if agent_id:
-        where.append("agent_id = ?"); args.append(agent_id)
+        where.append("t.agent_id = ?"); args.append(agent_id)
     if client_id:
-        where.append("client_id = ?"); args.append(client_id)
+        where.append("t.client_id = ?"); args.append(client_id)
     w = (" WHERE " + " AND ".join(where)) if where else ""
-    total = _one(f"SELECT COUNT(*) AS n FROM tickets{w}", args)["n"]
-    rows = _all(f"SELECT * FROM tickets{w} ORDER BY id DESC LIMIT ? OFFSET ?", [*args, limit, offset])
+    total = _one(f"SELECT COUNT(*) AS n FROM tickets t{w}", args)["n"]
+    rows = _all(f"{TICKET_SELECT}{w} ORDER BY t.id DESC LIMIT ? OFFSET ?", [*args, limit, offset])
     return {"items": [_ticket_out(r) for r in rows], "total": total, "limit": limit, "offset": offset}
 
 
@@ -245,8 +300,8 @@ def assign(ticket_id, agent_id, assigned_by, reason):
 
 def overdue_tickets(now_iso):
     return [_ticket_out(r) for r in _all(
-        "SELECT * FROM tickets WHERE status IN ('open', 'pending') AND is_escalated = 0 "
-        "AND due_at IS NOT NULL AND due_at < ? ORDER BY id", (now_iso,))]
+        TICKET_SELECT + " WHERE t.status IN ('open', 'pending') AND t.is_escalated = 0 "
+        "AND t.due_at IS NOT NULL AND t.due_at < ? ORDER BY t.id", (now_iso,))]
 
 
 def escalate(ticket_id, new_priority):
@@ -255,18 +310,26 @@ def escalate(ticket_id, new_priority):
 
 
 # ---------- messages ----------
+# author_name: users and agents live in different tables, so resolve by sender_type.
+MESSAGE_SELECT = ("SELECT m.*, CASE m.sender_type "
+                  "WHEN 'user' THEN (SELECT name FROM users WHERE id = m.sender_id) "
+                  "WHEN 'client' THEN (SELECT name FROM clients WHERE id = m.sender_id) "
+                  "ELSE (SELECT name FROM agents WHERE id = m.sender_id) END AS author_name "
+                  "FROM messages m")
+
+
 def add_message(ticket_id, author_type, author_id, text, visibility):
     ts = now()
     cur = _exec("INSERT INTO messages (ticket_id, sender_id, sender_type, text, visibility, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?)", (ticket_id, author_id, author_type, text, visibility, ts))
     _exec("UPDATE tickets SET updated_at = ? WHERE id = ?", (ts, ticket_id))
-    return _message_out(_one("SELECT * FROM messages WHERE id = ?", (cur.lastrowid,)))
+    return _message_out(_one(MESSAGE_SELECT + " WHERE m.id = ?", (cur.lastrowid,)))
 
 
 def get_messages(ticket_id, include_internal):
-    vis = "" if include_internal else " AND visibility = 'public'"
+    vis = "" if include_internal else " AND m.visibility = 'public'"
     return [_message_out(r) for r in _all(
-        f"SELECT * FROM messages WHERE ticket_id = ?{vis} ORDER BY created_at ASC, id ASC", (ticket_id,))]
+        f"{MESSAGE_SELECT} WHERE m.ticket_id = ?{vis} ORDER BY m.created_at ASC, m.id ASC", (ticket_id,))]
 
 
 # ---------- audit (append-only) ----------
@@ -276,8 +339,14 @@ def audit(ticket_id, actor_type, actor_id, action, old_value, new_value):
 
 
 def get_audit(ticket_id):
-    return [_row(r) for r in _all("SELECT * FROM audit WHERE ticket_id = ? ORDER BY created_at ASC, id ASC",
-                                  (ticket_id,))]
+    """Oldest first, with actor_name resolved from the right table."""
+    return [_row(r) for r in _all(
+        "SELECT e.*, CASE e.actor_type "
+        "WHEN 'system' THEN 'System' "
+        "WHEN 'user' THEN (SELECT name FROM users WHERE id = e.actor_id) "
+        "WHEN 'client' THEN (SELECT name FROM clients WHERE id = e.actor_id) "
+        "ELSE (SELECT name FROM agents WHERE id = e.actor_id) END AS actor_name "
+        "FROM audit e WHERE e.ticket_id = ? ORDER BY e.created_at ASC, e.id ASC", (ticket_id,))]
 
 
 # ---------- report ----------

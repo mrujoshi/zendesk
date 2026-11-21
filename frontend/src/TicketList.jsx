@@ -3,8 +3,8 @@ import { api, isActive, isStaff, PRIORITIES, timeAgo } from './api.js';
 import { Avatar, EmptyState, Icon, Kbd, PriorityTag, Skeleton, SlaChip, StatusPill, useHotkeys, useNow, useToast } from './ui.jsx';
 
 // Each tab = query params for GET /api/tickets (status/priority/escalated/agent_id), plus an optional
-// client-side filter. The API takes one status at a time, so "Active" fetches all and keeps open+pending.
-// Clients get the same endpoint; the API scopes it to their own tickets.
+// filter applied in the browser. The API takes one status at a time, so "Active" fetches all and keeps
+// open+pending. Users get the same endpoint; the API only returns their own client's tickets.
 const STAFF_TABS = [
   { key: 'active', label: 'Open & pending', params: () => ({}), keep: isActive },
   { key: 'mine', label: 'Mine', params: (u) => ({ agent_id: u.id }), keep: isActive },
@@ -14,8 +14,9 @@ const STAFF_TABS = [
   { key: 'all', label: 'All', params: () => ({}) },
 ];
 
-const CLIENT_TABS = [
+const USER_TABS = [
   { key: 'active', label: 'Open & pending', params: () => ({}), keep: isActive },
+  { key: 'mine', label: 'Raised by me', params: () => ({}), keep: (t, u) => t.user_id === u.id },
   { key: 'solved', label: 'Solved', params: () => ({ status: 'solved' }) },
   { key: 'closed', label: 'Closed', params: () => ({ status: 'closed' }) },
   { key: 'all', label: 'All', params: () => ({}) },
@@ -26,7 +27,7 @@ const POLL_MS = 10_000; // live updates: re-fetch the list every 10s
 
 export default function TicketList({ user, names, selectedId, onSelect, refreshKey }) {
   const staff = isStaff(user);
-  const tabs = staff ? STAFF_TABS : CLIENT_TABS;
+  const tabs = staff ? STAFF_TABS : USER_TABS;
   const [tab, setTab] = useState('active');
   const [priority, setPriority] = useState('');
   const [search, setSearch] = useState('');
@@ -69,7 +70,7 @@ export default function TicketList({ user, names, selectedId, onSelect, refreshK
   // Search is client-side: the API has no text search parameter.
   const q = search.trim().toLowerCase();
   const tickets = page?.items
-    .filter((t) => !current.keep || current.keep(t))
+    .filter((t) => !current.keep || current.keep(t, user))
     .filter((t) => !q || t.title.toLowerCase().includes(q) || t.description.toLowerCase().includes(q));
 
   // Keyboard: J/K move through the visible list, / focuses search.
@@ -104,7 +105,7 @@ export default function TicketList({ user, names, selectedId, onSelect, refreshK
   return (
     <section className="list" aria-label="Tickets">
       <div className="list-head">
-        <h2>{staff ? 'Tickets' : 'My requests'}</h2>
+        <h2>{staff ? 'Tickets' : `${user.client_name} tickets`}</h2>
         {tickets && <span className="count">{tickets.length}</span>}
         <span className="live" title="The list refreshes every 10 seconds">
           <span className="live-dot" />
@@ -192,15 +193,14 @@ export default function TicketList({ user, names, selectedId, onSelect, refreshK
           <EmptyState icon={q ? 'search' : 'inbox'} title={q ? 'No matches' : 'All clear'}>
             {q
               ? `Nothing in this view matches “${search.trim()}”.`
-              : user.role === 'client'
-                ? 'You have no tickets here. Press N to raise one.'
+              : user.role === 'user'
+                ? 'No tickets here. Press N to raise one.'
                 : 'No tickets in this view right now.'}
           </EmptyState>
         )}
 
         {tickets?.map((t) => {
-          // Staff see who raised it; clients see whether someone has picked it up.
-          const who = staff ? names.client(t.client_id) : t.agent_id ? 'Support team' : 'Waiting for an agent';
+          const raisedBy = t.user_id === user.id && !staff ? 'You' : t.user_name ?? t.client_name;
           return (
             <li key={t.id}>
               <button
@@ -209,7 +209,7 @@ export default function TicketList({ user, names, selectedId, onSelect, refreshK
                 onClick={() => onSelect(t.id)}
                 aria-current={t.id === selectedId}
               >
-                <Avatar name={who} size={34} />
+                <Avatar name={t.user_name ?? t.client_name} size={34} />
                 <div className="row-body">
                   <div className="row-top">
                     <StatusPill status={t.status} />
@@ -221,13 +221,15 @@ export default function TicketList({ user, names, selectedId, onSelect, refreshK
                     <Highlight text={t.title} q={q} />
                   </div>
                   <div className="row-meta">
-                    <span>{who}</span>
+                    <span>{raisedBy}</span>
                     {staff && (
                       <>
                         <span className="sep" />
-                        <span>{names.agent(t.agent_id) ?? 'Unassigned'}</span>
+                        <span className="client-chip">{t.client_name}</span>
                       </>
                     )}
+                    <span className="sep" />
+                    <span>{t.agent_name ?? (staff ? 'Unassigned' : 'Waiting for an agent')}</span>
                     <span className="sep" />
                     <span>{timeAgo(t.updated_at)}</span>
                     <SlaChip ticket={t} />

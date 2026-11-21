@@ -4,7 +4,7 @@ import { Icon, Kbd, Modal, useToast } from './ui.jsx';
 
 const TITLE_MAX = 200;
 
-// Clients only (POST /api/tickets). The requester is the logged-in client.
+// Users only (POST /api/tickets). The ticket belongs to the user's client; colleagues there can see it.
 export default function NewTicketModal({ user, onClose, onCreated }) {
   const [form, setForm] = useState({ title: '', description: '', priority: 'normal' });
   const [error, setError] = useState(null);
@@ -36,7 +36,8 @@ export default function NewTicketModal({ user, onClose, onCreated }) {
     <Modal title="New ticket" onClose={onClose}>
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }} onKeyDown={submitOnCmdEnter}>
         <p className="muted" style={{ margin: '-8px 0 0' }}>
-          Tell us what’s wrong, {user.name.split(' ')[0]}. Your ticket goes straight to the next available agent.
+          Tell us what’s wrong, {user.name.split(' ')[0]}. Your ticket goes straight to the next available agent,
+          and your colleagues at {user.client_name} can follow it too.
         </p>
         {error && (
           <div className="banner error" style={{ margin: 0 }}>

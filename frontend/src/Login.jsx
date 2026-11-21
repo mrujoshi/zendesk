@@ -2,18 +2,17 @@ import { useState } from 'react';
 import { api, setToken } from './api.js';
 import { Avatar, Icon } from './ui.jsx';
 
-// Demo users from backend/seed.py (password123). Agents and admins log in as user_type 'agent'.
+// Demo accounts from backend/seed.py (password123). Agents and admins log in as user_type 'agent';
+// users belong to a client (company) and log in as user_type 'user'.
 const DEMO_ACCOUNTS = [
   { email: 'asha@demo.com', name: 'Admin Asha', role: 'admin', user_type: 'agent' },
   { email: 'priya@demo.com', name: 'Priya Agent', role: 'agent', user_type: 'agent' },
-  { email: 'rahul@demo.com', name: 'Rahul Agent', role: 'agent', user_type: 'agent' },
-  { email: 'support@acme.com', name: 'Acme Corp', role: 'client', user_type: 'client' },
+  { email: 'aditi@acme.com', name: 'Aditi Sharma', role: 'user', client: 'Acme Corp', user_type: 'user' },
+  { email: 'rohan@globex.com', name: 'Rohan Gupta', role: 'user', client: 'Globex', user_type: 'user' },
 ];
 
 export default function Login({ onLoggedIn }) {
-  const [mode, setMode] = useState('login'); // 'login' | 'signup'
   const [userType, setUserType] = useState('agent');
-  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
@@ -31,12 +30,7 @@ export default function Login({ onLoggedIn }) {
     setBusy('form');
     setError(null);
     try {
-      if (mode === 'signup') {
-        await api('/clients', { method: 'POST', body: { name, email, password } }); // open signup
-        await logIn({ email, password, user_type: 'client' });
-      } else {
-        await logIn({ email, password, user_type: userType });
-      }
+      await logIn({ email, password, user_type: userType });
     } catch (err) {
       setError(err.message);
       setBusy(null);
@@ -56,8 +50,6 @@ export default function Login({ onLoggedIn }) {
       setBusy(null);
     }
   }
-
-  const signup = mode === 'signup';
 
   return (
     <div className="login-page">
@@ -91,9 +83,9 @@ export default function Login({ onLoggedIn }) {
       </aside>
 
       <main className="login-side">
-        <form className="login-card" onSubmit={submit} aria-label={signup ? 'Create account' : 'Log in'}>
-          <h2>{signup ? 'Create your account' : 'Welcome back'}</h2>
-          <p className="lead">{signup ? 'Sign up as a client to raise support tickets.' : 'Log in to your support workspace.'}</p>
+        <form className="login-card" onSubmit={submit} aria-label="Log in">
+          <h2>Welcome back</h2>
+          <p className="lead">Log in to your support workspace.</p>
 
           {error && (
             <div className="banner error" style={{ margin: 0 }}>
@@ -101,11 +93,10 @@ export default function Login({ onLoggedIn }) {
             </div>
           )}
 
-          {!signup && (
-            <div className="segmented" role="radiogroup" aria-label="Log in as">
+          <div className="segmented" role="radiogroup" aria-label="Log in as">
               {[
                 ['agent', 'Agent / Admin'],
-                ['client', 'Client'],
+                ['user', 'User'],
               ].map(([v, l]) => (
                 <button
                   type="button"
@@ -118,21 +109,13 @@ export default function Login({ onLoggedIn }) {
                   {l}
                 </button>
               ))}
-            </div>
-          )}
-
-          {signup && (
-            <label className="field">
-              Full name
-              <input required maxLength={100} value={name} onChange={(e) => setName(e.target.value)} autoFocus />
-            </label>
-          )}
+          </div>
           <label className="field">
             Email
             <input
               type="email"
               required
-              autoFocus={!signup}
+              autoFocus
               autoComplete="email"
               placeholder="you@company.com"
               value={email}
@@ -140,16 +123,12 @@ export default function Login({ onLoggedIn }) {
             />
           </label>
           <label className="field">
-            <span className="label-row">
-              Password
-              {signup && <span className="char-count">at least 8 characters</span>}
-            </span>
+            Password
             <span className="pw-wrap">
               <input
                 type={showPw ? 'text' : 'password'}
                 required
-                minLength={signup ? 8 : 1}
-                autoComplete={signup ? 'new-password' : 'current-password'}
+                autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
@@ -165,23 +144,13 @@ export default function Login({ onLoggedIn }) {
           </label>
 
           <button className="primary" type="submit" disabled={Boolean(busy)}>
-            {busy === 'form' ? 'Please wait…' : signup ? 'Create account' : 'Log in'}
+            {busy === 'form' ? 'Please wait…' : 'Log in'}
           </button>
-          <div style={{ textAlign: 'center', fontSize: 13 }}>
-            <span className="muted">{signup ? 'Already have an account? ' : 'New client? '}</span>
-            <button
-              type="button"
-              className="text-btn"
-              onClick={() => {
-                setMode(signup ? 'login' : 'signup');
-                setError(null);
-              }}
-            >
-              {signup ? 'Log in' : 'Create an account'}
-            </button>
-          </div>
+          <p className="muted small" style={{ textAlign: 'center', margin: 0 }}>
+            Need an account? Your admin adds users to your client (company).
+          </p>
 
-          {!signup && (
+          {(
             <>
               <div className="divider">or try a demo account</div>
               <div className="demo-grid">
@@ -197,8 +166,9 @@ export default function Login({ onLoggedIn }) {
                     <Avatar name={a.name} size={30} />
                     <span className="demo-text">
                       <span className="demo-name">{busy === a.email ? 'Logging in…' : a.name}</span>
-                      <span className={`role-tag role-${a.role}`} style={{ alignSelf: 'flex-start' }}>
-                        {a.role}
+                      <span className="demo-sub">
+                        <span className={`role-tag role-${a.role}`}>{a.role}</span>
+                        {a.client && <span className="muted small">{a.client}</span>}
                       </span>
                     </span>
                   </button>

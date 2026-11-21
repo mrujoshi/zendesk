@@ -64,7 +64,6 @@ function useTheme() {
 function Workspace({ user, onLogout }) {
   const staff = isStaff(user);
   const [agents, setAgents] = useState([]);
-  const [clients, setClients] = useState([]);
   const [view, setView] = useState('tickets');
   const [selectedId, setSelectedId] = useState(null);
   const [showNew, setShowNew] = useState(false);
@@ -73,39 +72,33 @@ function Workspace({ user, onLogout }) {
   const [error, setError] = useState(null);
   const [theme, toggleTheme] = useTheme();
 
-  // Tickets only carry client_id / agent_id, so staff load both lists once to show names.
-  // Clients can't list agents (403), so for them agent names fall back to "Support agent".
-  const loadPeople = () => {
+  // Tickets, messages and audit rows already carry display names (client_name, user_name, agent_name,
+  // author_name, actor_name). Staff also load the agent list for the assignee dropdown and for audit
+  // rows that store agent ids ("assigned 2 -> 3").
+  const loadAgents = () => {
     if (!staff) return;
-    Promise.all([api('/agents'), api('/clients')])
-      .then(([a, c]) => {
-        setAgents(a);
-        setClients(c);
-      })
+    api('/agents')
+      .then(setAgents)
       .catch((e) => setError(e.message));
   };
-  useEffect(loadPeople, []);
+  useEffect(loadAgents, []);
 
   const names = useMemo(() => {
     const a = new Map(agents.map((x) => [x.id, x.name]));
-    const c = new Map(clients.map((x) => [x.id, x.name]));
-    return {
-      agent: (id) => (id == null ? null : a.get(id) ?? (staff && id === user.id ? user.name : 'Support agent')),
-      client: (id) => (user.role === 'client' && id === user.id ? user.name : c.get(id) ?? `Client #${id}`),
-    };
-  }, [agents, clients, user, staff]);
+    return { agent: (id) => (id == null ? null : a.get(Number(id)) ?? `Agent #${id}`) };
+  }, [agents]);
 
   const refresh = () => setRefreshKey((k) => k + 1);
 
   const views = [
-    { key: 'tickets', label: staff ? 'Tickets' : 'My requests', icon: 'inbox' },
+    { key: 'tickets', label: 'Tickets', icon: 'inbox' },
     ...(staff ? [{ key: 'report', label: 'Report', icon: 'chart' }] : []),
     ...(user.role === 'admin' ? [{ key: 'admin', label: 'Team', icon: 'users' }] : []),
   ];
 
   useHotkeys(
     {
-      n: () => user.role === 'client' && setShowNew(true),
+      n: () => user.role === 'user' && setShowNew(true),
       '?': () => setShowKeys(true),
       t: toggleTheme,
       '1': () => setView('tickets'),
@@ -134,8 +127,8 @@ function Workspace({ user, onLogout }) {
         </nav>
         <div className="spacer" />
         <div className="top-actions">
-          {/* POST /api/tickets is client-only in the contract */}
-          {user.role === 'client' && (
+          {/* POST /api/tickets is for users (people at a client) only */}
+          {user.role === 'user' && (
             <button className="primary" onClick={() => setShowNew(true)} title="New ticket (N)">
               <Icon name="plus" />
               <span className="hide-sm">New ticket</span>
@@ -156,8 +149,9 @@ function Workspace({ user, onLogout }) {
             <Avatar name={user.name} size={32} />
             <div className="me-text">
               <span className="me-name">{user.name}</span>
-              <span className={`role-tag role-${user.role}`} style={{ alignSelf: 'flex-start' }}>
-                {user.role}
+              <span className="me-sub">
+                <span className={`role-tag role-${user.role}`}>{user.role}</span>
+                {user.client_name && <span>{user.client_name}</span>}
               </span>
             </div>
             <button className="icon-btn" onClick={onLogout} title="Log out" aria-label="Log out">
@@ -202,7 +196,7 @@ function Workspace({ user, onLogout }) {
         </main>
       )}
       {view === 'report' && <Report />}
-      {view === 'admin' && <AdminPanel agents={agents} clients={clients} onChanged={loadPeople} />}
+      {view === 'admin' && <AdminPanel agents={agents} onAgentsChanged={loadAgents} />}
 
       {showNew && (
         <NewTicketModal
@@ -222,7 +216,7 @@ function Workspace({ user, onLogout }) {
           <div className="shortcuts">
             <span><Kbd>J</Kbd> <Kbd>K</Kbd></span> Next / previous ticket
             <span><Kbd>/</Kbd></span> Search tickets
-            {user.role === 'client' && (
+            {user.role === 'user' && (
               <>
                 <span><Kbd>N</Kbd></span> New ticket
               </>

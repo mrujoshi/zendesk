@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, isStaff, STATUS_FLOW, timeAgo } from './api.js';
 import { Avatar, Icon, Kbd, PriorityTag, Skeleton, SlaChip, StatusPill, useHotkeys, useToast } from './ui.jsx';
+import AssistPanel from './AssistPanel.jsx';
 
 const STEPS = ['open', 'pending', 'solved', 'closed'];
 const STEP_HELP = {
   open: 'Needs an agent',
-  pending: 'Waiting on client',
-  solved: 'Client can reopen',
+  pending: 'Waiting on user',
+  solved: 'User can reopen',
   closed: 'Locked for good',
 };
 
@@ -73,19 +74,29 @@ export default function TicketDetail({ id, user, agents, names, onChanged, onBac
       `Assigned to ${agentId === user.id ? 'you' : names.agent(agentId)}`
     );
 
-  const sendReply = (e) => {
+  const sendReply = (e, text = reply, asNote = internal && staff) => {
     e?.preventDefault();
-    if (!reply.trim() || busy) return;
-    const isNote = internal && staff;
+    if (!text.trim() || busy) return;
     mutate(async () => {
       await api(`/tickets/${id}/messages`, {
         method: 'POST',
-        body: { text: reply, visibility: isNote ? 'internal' : 'public' },
+        body: { text, visibility: asNote ? 'internal' : 'public' },
       });
       setReply('');
       setInternal(false);
-    }, isNote ? 'Internal note added' : 'Reply sent');
+    }, asNote ? 'Internal note added' : 'Reply sent');
   };
+
+  // AI assistant actions: put the suggested reply in the composer, or send it as a public reply.
+  const editSuggested = (text) => {
+    setInternal(false);
+    setReply(text);
+    requestAnimationFrame(() => {
+      replyRef.current?.focus();
+      replyRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    });
+  };
+  const sendSuggested = (text) => sendReply(null, text, false);
 
   if (!ticket) {
     return (
@@ -112,8 +123,8 @@ export default function TicketDetail({ id, user, agents, names, onChanged, onBac
   const moves = staff ? STATUS_FLOW[ticket.status] ?? [] : [];
   // The API only accepts active agents with role 'agent' for manual assignment.
   const assignable = agents.filter((a) => a.is_active && a.role === 'agent');
-  const clientName = names.client(ticket.client_id);
-  const authorName = (m) => (m.author_type === 'client' ? names.client(m.author_id) : names.agent(m.author_id));
+  const requester = ticket.user_name ?? ticket.client_name; // user who raised it (legacy rows: the client)
+  const agentName = ticket.agent_name ?? names.agent(ticket.agent_id);
 
   // What the API will do to the status when this reply is sent (rules.status_after_reply).
   let replyHint = null;
@@ -136,8 +147,9 @@ export default function TicketDetail({ id, user, agents, names, onChanged, onBac
             <div className="detail-sub">
               <span>#{ticket.id}</span>
               <span>·</span>
-              <Avatar name={clientName} size={20} />
-              <span>{clientName}</span>
+              <Avatar name={requester} size={20} />
+              <span>{requester}</span>
+              <span className="client-chip">{ticket.client_name}</span>
               <span>·</span>
               <span>opened {timeAgo(ticket.created_at)}</span>
             </div>
@@ -195,7 +207,7 @@ export default function TicketDetail({ id, user, agents, names, onChanged, onBac
               </div>
               <div className="thread">
                 <Message
-                  name={clientName}
+                  name={requester}
                   when={ticket.created_at}
                   text={ticket.description}
                   side="from-requester first"
@@ -204,10 +216,10 @@ export default function TicketDetail({ id, user, agents, names, onChanged, onBac
                 {ticket.messages.map((m) => (
                   <Message
                     key={m.id}
-                    name={authorName(m)}
+                    name={m.author_name ?? (m.author_type === 'agent' ? 'Support agent' : 'User')}
                     when={m.created_at}
                     text={m.text}
-                    side={`${m.author_type === 'client' ? 'from-requester' : 'from-agent'} ${m.visibility === 'internal' ? 'internal' : ''}`}
+                    side={`${m.author_type === 'agent' ? 'from-agent' : 'from-requester'} ${m.visibility === 'internal' ? 'internal' : ''}`}
                     internal={m.visibility === 'internal'}
                   />
                 ))}
@@ -238,7 +250,7 @@ export default function TicketDetail({ id, user, agents, names, onChanged, onBac
                       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) sendReply(e);
                       if (e.key === 'Escape') e.currentTarget.blur();
                     }}
-                    placeholder={internal ? 'Write a note for your team…' : staff ? `Reply to ${clientName}…` : 'Write a reply to the support team…'}
+                    placeholder={internal ? 'Write a note for your team…' : staff ? `Reply to ${requester}…` : 'Write a reply to the support team…'}
                     rows={3}
                     aria-label="Reply"
                   />
@@ -264,8 +276,11 @@ export default function TicketDetail({ id, user, agents, names, onChanged, onBac
             </div>
           </div>
 
-          {/* side column: properties + audit */}
+          {/* side column: AI assistant (staff) + properties + audit */}
           <aside className="side" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {staff && (
+              <AssistPanel ticketId={ticket.id} closed={closed} busy={busy} onEdit={editSuggested} onSend={sendSuggested} />
+            )}
             <div className="card props">
               <div className="card-head">
                 <Icon name="user" /> Details
@@ -289,7 +304,7 @@ export default function TicketDetail({ id, user, agents, names, onChanged, onBac
                       {ticket.agent_id == null && <option value="">Unassigned</option>}
                       {/* keep the current assignee visible even if they're an admin (escalation) */}
                       {ticket.agent_id != null && !assignable.some((a) => a.id === ticket.agent_id) && (
-                        <option value={ticket.agent_id}>{names.agent(ticket.agent_id)}</option>
+                        <option value={ticket.agent_id}>{agentName}</option>
                       )}
                       {assignable.map((a) => (
                         <option key={a.id} value={a.id}>
@@ -307,7 +322,7 @@ export default function TicketDetail({ id, user, agents, names, onChanged, onBac
                   <span className="prop-value">
                     {ticket.agent_id ? (
                       <>
-                        <Avatar name={names.agent(ticket.agent_id)} size={22} /> {names.agent(ticket.agent_id)}
+                        <Avatar name={agentName} size={22} /> {agentName}
                       </>
                     ) : (
                       <span className="muted">Waiting for an agent</span>
@@ -329,9 +344,16 @@ export default function TicketDetail({ id, user, agents, names, onChanged, onBac
                 </span>
               </div>
               <div className="prop">
-                <span className="prop-label">Requester</span>
+                <span className="prop-label">Raised by</span>
                 <span className="prop-value">
-                  <Avatar name={clientName} size={22} /> {clientName}
+                  <Avatar name={requester} size={22} /> {requester}
+                  {ticket.user_id === user.id && <span className="muted small">(you)</span>}
+                </span>
+              </div>
+              <div className="prop">
+                <span className="prop-label">Client</span>
+                <span className="prop-value">
+                  <span className="client-chip">{ticket.client_name}</span>
                 </span>
               </div>
               <div className="prop">
@@ -352,7 +374,7 @@ export default function TicketDetail({ id, user, agents, names, onChanged, onBac
                   <ul className="timeline">
                     {[...audit].reverse().map((e) => (
                       <li key={e.id}>
-                        <strong>{actorName(e, names)}</strong> {describe(e, names)}
+                        <strong>{actorName(e)}</strong> {describe(e, names)}
                         <time dateTime={e.created_at} title={new Date(e.created_at).toLocaleString()}>
                           {timeAgo(e.created_at)}
                         </time>
@@ -392,9 +414,8 @@ function Message({ name, when, text, side, internal, label }) {
   );
 }
 
-function actorName(e, names) {
-  if (e.actor_type === 'system' || e.actor_id == null) return 'System';
-  return e.actor_type === 'client' ? names.client(e.actor_id) : names.agent(e.actor_id);
+function actorName(e) {
+  return e.actor_name ?? (e.actor_type === 'system' ? 'System' : 'Unknown');
 }
 
 function describe(e, names) {
