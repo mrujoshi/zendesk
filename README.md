@@ -112,7 +112,7 @@ SQLite datastore located at `backend/zendesk.db` configured with `WAL` journal m
 
 ## 🛠️ How to Run Locally
 
-### 1. Backend Setup
+### 1. Backend Setup (Terminal 1)
 ```bash
 cd backend-controller
 
@@ -133,13 +133,26 @@ uvicorn main:app --reload --port 8000
   SLA_UNIT=minutes uvicorn main:app --reload --port 8000
   ```
 
-### 2. Database Seeding
+### 2. Frontend Setup (Terminal 2)
+```bash
+cd frontend
+
+# Install Node dependencies
+npm install
+
+# Start Vite React development server (proxies /api to :8000)
+npm run dev
+```
+
+* **Browser UI:** [http://localhost:5173](http://localhost:5173)
+
+### 3. Database Seeding
 To re-initialize and seed 10 rows in all tables:
 ```bash
 python3 ../backend/seed.py
 ```
 
-### 3. Demo Credentials
+### 4. Demo Credentials
 * **All seed accounts use password:** `password123`
 * **Admin:** `asha@demo.com` (`user_type`: `agent`)
 * **Agents:** `priya@demo.com`, `rahul@demo.com`, `mrudula@support.com`, `monali@support.com` (`user_type`: `agent`)
