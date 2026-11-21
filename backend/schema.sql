@@ -126,6 +126,17 @@ CREATE TABLE IF NOT EXISTS system_settings (
     value TEXT NOT NULL
 );
 
+-- 10. Sessions Table (Login Bearer Tokens for Clients and Agents)
+CREATE TABLE IF NOT EXISTS sessions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_hash  TEXT NOT NULL UNIQUE,      -- SHA-256 of the token; raw token never stored
+    user_type   TEXT NOT NULL CHECK (user_type IN ('client', 'agent')),
+    user_id     INTEGER NOT NULL,          -- references clients.id or agents.id
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at  TIMESTAMP NOT NULL,        -- login time + 8 hours
+    revoked_at  TIMESTAMP                  -- set on logout; NULL = active
+);
+
 -- Indexes for high performance
 CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status);
 CREATE INDEX IF NOT EXISTS idx_tickets_agent ON tickets(agent_id);
@@ -135,3 +146,5 @@ CREATE INDEX IF NOT EXISTS idx_messages_ticket_order ON messages(ticket_id, crea
 CREATE INDEX IF NOT EXISTS idx_worksheet_ticket ON worksheet(ticket_id);
 CREATE INDEX IF NOT EXISTS idx_worksheet_agent ON worksheet(agent_id);
 CREATE INDEX IF NOT EXISTS idx_audit_ticket ON audit(ticket_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_type, user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_lookup ON sessions(token_hash, revoked_at, expires_at);

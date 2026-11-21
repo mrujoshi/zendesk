@@ -21,6 +21,7 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
     cursor = conn.cursor()
 
     # Clear existing data in reverse dependency order
+    cursor.execute("DELETE FROM sessions;")
     cursor.execute("DELETE FROM audit;")
     cursor.execute("DELETE FROM worksheet;")
     cursor.execute("DELETE FROM messages;")
