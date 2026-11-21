@@ -1,6 +1,7 @@
 """
 Seed script to populate Mini-Zendesk SQLite database.
-Seeds User, Client, Agent (with encrypted passwords), Tickets, Messages, Worksheet, and Audit.
+Seeds 10 rows each in Users, Clients, Customers, and Agents with encrypted passwords,
+along with sample Tickets, Messages, Worksheet, and Audit records.
 """
 
 from datetime import datetime, timezone, timedelta
@@ -19,35 +20,85 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
     conn = get_db_connection(db_path)
     cursor = conn.cursor()
 
-    # Clear existing data
+    # Clear existing data in reverse dependency order
     cursor.execute("DELETE FROM audit;")
     cursor.execute("DELETE FROM worksheet;")
     cursor.execute("DELETE FROM messages;")
     cursor.execute("DELETE FROM tickets;")
     cursor.execute("DELETE FROM agents;")
+    cursor.execute("DELETE FROM customers;")
     cursor.execute("DELETE FROM clients;")
     cursor.execute("DELETE FROM users;")
     cursor.execute("DELETE FROM system_settings;")
 
     default_pwd_hash = hash_password("password123")
 
-    # 1. Seed Users (general / system users)
+    # 1. Seed 10 Users (General / Internal users)
     users = [
-        ("Demo User", "General", default_pwd_hash),
-        ("Support Supervisor", "Supervisor", default_pwd_hash),
+        ("Aarav Patel", "Employee", default_pwd_hash),
+        ("Aditi Sharma", "Manager", default_pwd_hash),
+        ("Rohan Gupta", "Support", default_pwd_hash),
+        ("Sanya Verma", "Finance", default_pwd_hash),
+        ("Vikram Malhotra", "HR", default_pwd_hash),
+        ("Ananya Deshmukh", "Operations", default_pwd_hash),
+        ("Karan Mehta", "Developer", default_pwd_hash),
+        ("Pooja Kulkarni", "QA", default_pwd_hash),
+        ("Siddharth Rao", "DevOps", default_pwd_hash),
+        ("Neha Joshi", "Product", default_pwd_hash),
     ]
     cursor.executemany(
         "INSERT INTO users (name, category, password_hash) VALUES (?, ?, ?);",
         users
     )
 
-    # 2. Seed Agents (Support team and Admins)
+    # 2. Seed 10 Clients (Companies / Accounts)
+    clients = [
+        ("Acme Corp", "support@acme.com", default_pwd_hash),
+        ("Globex International", "it@globex.com", default_pwd_hash),
+        ("Initech Systems", "help@initech.com", default_pwd_hash),
+        ("Umbrella Health", "contact@umbrella.com", default_pwd_hash),
+        ("Stark Industries", "support@stark.com", default_pwd_hash),
+        ("Wayne Enterprises", "helpdesk@wayne.com", default_pwd_hash),
+        ("Cyberdyne AI", "ops@cyberdyne.com", default_pwd_hash),
+        ("Soylent Corp", "client@soylent.com", default_pwd_hash),
+        ("Massive Dynamic", "contact@massivedynamic.com", default_pwd_hash),
+        ("Hooli Cloud", "billing@hooli.com", default_pwd_hash),
+    ]
+    cursor.executemany(
+        "INSERT INTO clients (name, email, password_hash) VALUES (?, ?, ?);",
+        clients
+    )
+
+    # 3. Seed 10 Customers (End-user Requesters filing tickets)
+    customers = [
+        ("Ravi Kumar", "ravi@customer.com", default_pwd_hash),
+        ("Alice Johnson", "alice@clientcorp.com", default_pwd_hash),
+        ("Bob Smith", "bob@acme.com", default_pwd_hash),
+        ("Charlie Brown", "charlie@globex.com", default_pwd_hash),
+        ("Diana Prince", "diana@themyscira.com", default_pwd_hash),
+        ("Ethan Hunt", "ethan@imf.org", default_pwd_hash),
+        ("Fiona Gallagher", "fiona@chicago.com", default_pwd_hash),
+        ("George Clark", "george@initech.com", default_pwd_hash),
+        ("Hannah Abbott", "hannah@hogwarts.edu", default_pwd_hash),
+        ("Ian Malcolm", "ian@ingen.com", default_pwd_hash),
+    ]
+    cursor.executemany(
+        "INSERT INTO customers (name, email, password_hash) VALUES (?, ?, ?);",
+        customers
+    )
+
+    # 4. Seed 10 Agents (Support staff and Admins)
     agents = [
         ("Admin Asha", "asha@demo.com", "admin", default_pwd_hash, 1),
         ("Priya Agent", "priya@demo.com", "agent", default_pwd_hash, 1),
         ("Rahul Agent", "rahul@demo.com", "agent", default_pwd_hash, 1),
         ("Mrudula", "mrudula@support.com", "agent", default_pwd_hash, 1),
         ("Monali", "monali@support.com", "agent", default_pwd_hash, 1),
+        ("Mrunnayee", "mrunnayee@support.com", "admin", default_pwd_hash, 1),
+        ("Amit Joshi", "amit@support.com", "agent", default_pwd_hash, 1),
+        ("Sneha Patil", "sneha@support.com", "agent", default_pwd_hash, 1),
+        ("Kunal Shinde", "kunal@support.com", "agent", default_pwd_hash, 1),
+        ("Divya Nair", "divya@support.com", "agent", default_pwd_hash, 1),
     ]
     cursor.executemany(
         """
@@ -57,25 +108,14 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
         agents
     )
 
-    # 3. Seed Clients (Requesters filing tickets)
-    clients = [
-        ("Ravi Customer", "ravi@demo.com", default_pwd_hash),
-        ("Alice Johnson", "alice@clientcorp.com", default_pwd_hash),
-        ("Bob Smith", "bob@acme.com", default_pwd_hash),
-    ]
-    cursor.executemany(
-        "INSERT INTO clients (name, email, password_hash) VALUES (?, ?, ?);",
-        clients
-    )
-
-    # Fetch IDs
+    # Fetch IDs for seeding tickets and messages
     cursor.execute("SELECT id, name FROM agents;")
     agent_map = {row["name"]: row["id"] for row in cursor.fetchall()}
 
     cursor.execute("SELECT id, name FROM clients;")
     client_map = {row["name"]: row["id"] for row in cursor.fetchall()}
 
-    # 4. Seed Tickets
+    # 5. Seed Tickets
     now = datetime.now(timezone.utc)
     tickets = [
         (
@@ -83,7 +123,7 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
             "Getting 403 Forbidden error on /admin route after password reset.",
             "open",
             "urgent",
-            client_map["Ravi Customer"],
+            client_map["Acme Corp"],
             agent_map["Priya Agent"],
             0,
             (now + timedelta(hours=1)).isoformat()
@@ -93,7 +133,7 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
             "Please send the October consolidated invoice for our billing records.",
             "pending",
             "low",
-            client_map["Alice Johnson"],
+            client_map["Globex International"],
             agent_map["Rahul Agent"],
             0,
             (now + timedelta(hours=48)).isoformat()
@@ -103,7 +143,7 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
             "Would love to have an option to switch to dark mode in the customer portal.",
             "open",
             "normal",
-            client_map["Bob Smith"],
+            client_map["Initech Systems"],
             None,  # Unassigned
             0,
             (now + timedelta(hours=24)).isoformat()
@@ -113,7 +153,7 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
             "The link in the reset email expired within 2 minutes instead of 24 hours.",
             "solved",
             "high",
-            client_map["Ravi Customer"],
+            client_map["Umbrella Health"],
             agent_map["Priya Agent"],
             0,
             (now + timedelta(hours=4)).isoformat()
@@ -134,18 +174,18 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
     t2_id = ticket_rows[1]["id"]
     t4_id = ticket_rows[3]["id"]
 
-    # 5. Seed Messages with sender_id and sender_type
+    # 6. Seed Messages with sender_id and sender_type
     messages = [
-        (t1_id, client_map["Ravi Customer"], "client", "I am blocked from checking my team settings.", "public"),
+        (t1_id, client_map["Acme Corp"], "client", "We are blocked from checking our team settings.", "public"),
         (t1_id, agent_map["Priya Agent"], "agent", "Investigating the permission cache. Will update shortly.", "public"),
         (t1_id, agent_map["Priya Agent"], "agent", "Internal note: check Redis session token TTL.", "internal"),
 
-        (t2_id, client_map["Alice Johnson"], "client", "Can you email it to billing@acme.com directly?", "public"),
+        (t2_id, client_map["Globex International"], "client", "Can you email it to billing@globex.com directly?", "public"),
         (t2_id, agent_map["Rahul Agent"], "agent", "Generating the PDF invoice from our portal now.", "public"),
 
-        (t4_id, client_map["Ravi Customer"], "client", "The link arrived but says 'token expired'.", "public"),
+        (t4_id, client_map["Umbrella Health"], "client", "The link arrived but says 'token expired'.", "public"),
         (t4_id, agent_map["Priya Agent"], "agent", "We patched the expiration window. Please try the new link sent just now.", "public"),
-        (t4_id, client_map["Ravi Customer"], "client", "All set! Thanks for resolving this so quickly.", "public"),
+        (t4_id, client_map["Umbrella Health"], "client", "All set! Thanks for resolving this so quickly.", "public"),
     ]
 
     cursor.executemany(
@@ -156,7 +196,7 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
         messages
     )
 
-    # 6. Seed Worksheet (Agent queue & assignment history)
+    # 7. Seed Worksheet
     worksheet_rows = [
         (t1_id, agent_map["Priya Agent"], agent_map["Admin Asha"], "round_robin", "open"),
         (t2_id, agent_map["Rahul Agent"], agent_map["Admin Asha"], "round_robin", "pending"),
@@ -170,11 +210,11 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
         worksheet_rows
     )
 
-    # 7. Seed Audit Trail
+    # 8. Seed Audit Trail
     audit_rows = [
-        (t1_id, "client", client_map["Ravi Customer"], "created", None, "open"),
+        (t1_id, "client", client_map["Acme Corp"], "created", None, "open"),
         (t1_id, "agent", agent_map["Admin Asha"], "assigned", None, "Priya Agent"),
-        (t2_id, "client", client_map["Alice Johnson"], "created", None, "open"),
+        (t2_id, "client", client_map["Globex International"], "created", None, "open"),
         (t2_id, "agent", agent_map["Rahul Agent"], "status_change", "open", "pending"),
         (t4_id, "agent", agent_map["Priya Agent"], "status_change", "open", "solved"),
     ]
@@ -186,7 +226,7 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
         audit_rows
     )
 
-    # 8. Set Round-Robin Pointer in system_settings
+    # 9. Set Round-Robin Pointer
     cursor.execute(
         "INSERT INTO system_settings (key, value) VALUES (?, ?);",
         ("last_assigned_agent_id", str(agent_map["Rahul Agent"]))
@@ -194,7 +234,7 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
 
     conn.commit()
     conn.close()
-    print("Database seeded successfully with separated User, Client, Agent tables and encrypted passwords!")
+    print("Database seeded successfully with 10 rows each in users, clients, customers, and agents!")
 
 
 if __name__ == "__main__":

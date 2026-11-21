@@ -23,14 +23,21 @@
    * `password_hash` (TEXT, NOT NULL - Encrypted/Hashed using SHA-256 / PBKDF2)
    * `created_at` (TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
 
-2. **Client** (External Requesters / Customers filing tickets)
+2. **Client** (External Client Companies / Organizations)
    * `id` (INTEGER, PK, AUTOINCREMENT)
    * `name` (TEXT, NOT NULL)
    * `email` (TEXT, UNIQUE, NOT NULL)
    * `password_hash` (TEXT, NOT NULL - Encrypted password)
    * `created_at` (TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
 
-3. **Agent** (Internal Support Staff & Admins)
+3. **Customer** (End-user Requesters filing tickets)
+   * `id` (INTEGER, PK, AUTOINCREMENT)
+   * `name` (TEXT, NOT NULL)
+   * `email` (TEXT, UNIQUE, NOT NULL)
+   * `password_hash` (TEXT, NOT NULL - Encrypted password)
+   * `created_at` (TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
+
+4. **Agent** (Internal Support Staff & Admins)
    * `id` (INTEGER, PK, AUTOINCREMENT)
    * `name` (TEXT, NOT NULL)
    * `email` (TEXT, UNIQUE, NOT NULL)
