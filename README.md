@@ -146,11 +146,14 @@ npm run dev
 
 * **Browser UI:** [http://localhost:5173](http://localhost:5173)
 
-### 3. Database Seeding
-To re-initialize and seed 10 rows in all tables:
+### 3. Database Seeding & Standalone Dumps
+To re-initialize and seed 10 rows in user/client/customer/agent tables plus 100 tickets:
 ```bash
 python3 ../backend/seed.py
 ```
+
+* **Standalone SQLite Database:** [`backend/dummyticketdataquery.db`](file:///Users/mrudula/Projects/Zendesk/zendesk/backend/dummyticketdataquery.db) (pre-seeded with 100 tickets).
+* **SQL Query Dump:** [`backend/dummyticketdataquery.sql`](file:///Users/mrudula/Projects/Zendesk/zendesk/backend/dummyticketdataquery.sql) (raw SQL statements to recreate and populate the full database).
 
 ### 4. Demo Credentials
 * **All seed accounts use password:** `password123`
