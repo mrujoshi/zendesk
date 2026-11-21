@@ -15,13 +15,18 @@ _settings: dict = {}
 _ids = {k: count(1) for k in ("client", "agent", "ticket", "message", "worksheet", "audit")}
 
 
+_sessions: dict = {}
+
+
 def init():
-    """Real version: create tables if missing. Stub: seed demo users once."""
+    """Real version: create tables if missing. Stub: seed demo users once (password: password123)."""
     if not _agents:
-        create_agent("Admin Asha", "asha@demo.com", "admin")
-        create_agent("Priya", "priya@demo.com", "agent")
-        create_agent("Rahul", "rahul@demo.com", "agent")
-        create_client("Ravi Customer", "ravi@demo.com")
+        from security import hash_password
+        pw = hash_password("password123")
+        create_agent("Admin Asha", "asha@demo.com", "admin", pw)
+        create_agent("Priya", "priya@demo.com", "agent", pw)
+        create_agent("Rahul", "rahul@demo.com", "agent", pw)
+        create_client("Ravi Customer", "ravi@demo.com", pw)
 
 
 @contextmanager
@@ -30,28 +35,40 @@ def transaction():
     yield
 
 
+def _public(u):
+    """Never return password_hash to the API."""
+    return {k: v for k, v in u.items() if k != "password_hash"}
+
+
 # ---- users ----
-def create_client(name, email):
-    c = {"id": next(_ids["client"]), "name": name, "email": email, "created_at": now()}
+def create_client(name, email, password_hash):
+    c = {"id": next(_ids["client"]), "name": name, "email": email,
+         "password_hash": password_hash, "created_at": now()}
     _clients[c["id"]] = c
-    return dict(c)
+    return _public(c)
 
 
-def create_agent(name, email, role):
+def create_agent(name, email, role, password_hash):
     a = {"id": next(_ids["agent"]), "name": name, "email": email, "role": role,
-         "is_active": True, "created_at": now()}
+         "password_hash": password_hash, "is_active": True, "created_at": now()}
     _agents[a["id"]] = a
-    return dict(a)
+    return _public(a)
 
 
 def get_client(client_id):
     c = _clients.get(client_id)
-    return dict(c) if c else None
+    return _public(c) if c else None
 
 
 def get_agent(agent_id):
     a = _agents.get(agent_id)
-    return dict(a) if a else None
+    return _public(a) if a else None
+
+
+def find_for_login(user_type, email):
+    """The only function that returns password_hash."""
+    table = _clients if user_type == "client" else _agents
+    return next((dict(u) for u in table.values() if u["email"].lower() == email.lower()), None)
 
 
 def email_exists(kind, email):
@@ -60,11 +77,30 @@ def email_exists(kind, email):
 
 
 def list_agents():
-    return [dict(a) for a in _agents.values()]
+    return [_public(a) for a in _agents.values()]
 
 
 def list_clients():
-    return [dict(c) for c in _clients.values()]
+    return [_public(c) for c in _clients.values()]
+
+
+# ---- sessions ----
+def create_session(token_hash, user_type, user_id, expires_at):
+    _sessions[token_hash] = {"token_hash": token_hash, "user_type": user_type, "user_id": user_id,
+                             "created_at": now(), "expires_at": expires_at, "revoked_at": None}
+
+
+def get_session(token_hash, now_iso):
+    """Valid session only: exists, not revoked, not expired."""
+    s = _sessions.get(token_hash)
+    if not s or s["revoked_at"] or s["expires_at"] <= now_iso:
+        return None
+    return dict(s)
+
+
+def revoke_session(token_hash):
+    if token_hash in _sessions:
+        _sessions[token_hash]["revoked_at"] = now()
 
 
 def active_agent_ids():

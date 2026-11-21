@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 import models
-from controllers import reports, tickets, users
+from controllers import auth, reports, tickets, users
 from rules import RuleError
 
 log = logging.getLogger("mini-zendesk")
@@ -43,7 +43,7 @@ app.add_middleware(  # Vite dev server
     allow_headers=["*"],
 )
 
-for r in (users.router, tickets.router, reports.router):
+for r in (auth.router, users.router, tickets.router, reports.router):
     app.include_router(r, prefix="/api")
 
 
