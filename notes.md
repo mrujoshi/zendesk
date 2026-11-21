@@ -2,8 +2,8 @@
 
 ## Team & Roles
 * **Mrunnayee** - Frontend / UI
-* **Mrudula** - Backend
-* **Monali** - Backend
+* **Mrudula** - Backend (Data Model & SQLite Persistence)
+* **Monali** - Backend (Controllers, Routing & Business Rules)
 
 ## Tech Stack
 * **Frontend:** React
@@ -16,111 +16,149 @@
 
 ### Tables
 
-1. **Users / Identity**
+1. **User** (General / System users)
+   * `id` (INTEGER, PK, AUTOINCREMENT)
+   * `name` (TEXT, NOT NULL)
+   * `category` (TEXT, NOT NULL)
+   * `password_hash` (TEXT, NOT NULL - Encrypted/Hashed using SHA-256 / PBKDF2)
+   * `created_at` (TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
+
+2. **Client** (External Requesters / Customers filing tickets)
    * `id` (INTEGER, PK, AUTOINCREMENT)
    * `name` (TEXT, NOT NULL)
    * `email` (TEXT, UNIQUE, NOT NULL)
-   * `password_hash` (TEXT, NOT NULL)
-   * `role` (TEXT: `'client'`, `'agent'`, `'admin'`)
+   * `password_hash` (TEXT, NOT NULL - Encrypted password)
+   * `created_at` (TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
+
+3. **Agent** (Internal Support Staff & Admins)
+   * `id` (INTEGER, PK, AUTOINCREMENT)
+   * `name` (TEXT, NOT NULL)
+   * `email` (TEXT, UNIQUE, NOT NULL)
+   * `role` (TEXT: `'admin'`, `'agent'`, NOT NULL)
+   * `password_hash` (TEXT, NOT NULL - Encrypted password)
    * `is_active` (INTEGER, DEFAULT 1)
    * `created_at` (TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
 
-2. **Tickets**
+4. **Status** (Ticket Lifecycle & SLA State Definitions)
+   * `id` (INTEGER, PK, AUTOINCREMENT)
+   * `name` (TEXT, UNIQUE, NOT NULL)
+   * *Allowed Values:*
+     * `open` (Agent action required)
+     * `pending` (Waiting for client response)
+     * `solved` (Resolved by agent, client can confirm or reopen)
+     * `closed` (Final state, locked)
+     * `sla_breached` (Resolution target missed)
+     * `escalated` (Priority escalated to Tier 2 / Admin)
+
+5. **Tickets** (Core entity with explicit relational foreign keys)
    * `id` (INTEGER, PK, AUTOINCREMENT)
    * `title` (TEXT, NOT NULL)
    * `description` (TEXT, NOT NULL)
-   * `status` (TEXT: `'open'`, `'pending'`, `'solved'`, `'closed'`, DEFAULT `'open'`)
-   * `priority` (TEXT: `'low'`, `'medium'`, `'high'`, `'urgent'`, DEFAULT `'medium'`)
-   * `requester_id` (INTEGER, FK -> users.id)
-   * `assignee_id` (INTEGER, FK -> users.id, NULLABLE)
-   * `due_at` (TIMESTAMP, calculated based on priority SLA)
-   * `attachment_url` (TEXT, NULLABLE)
+   * `status` (TEXT: `'open'`, `'pending'`, `'solved'`, `'closed'`, `'sla_breached'`, `'escalated'`, DEFAULT `'open'`)
+   * `priority` (TEXT: `'low'`, `'normal'`, `'high'`, `'urgent'`, DEFAULT `'normal'`)
+   * `client_id` (INTEGER, NOT NULL, FK -> Client.id ON DELETE RESTRICT)
+   * `agent_id` (INTEGER, NULLABLE, FK -> Agent.id ON DELETE SET NULL - Current assigned agent)
+   * `is_escalated` (INTEGER, DEFAULT 0)
+   * `attachment_path` (TEXT, NULLABLE)
+   * `due_at` (TIMESTAMP, SLA resolution deadline based on priority)
+   * `solved_at` (TIMESTAMP, NULLABLE)
    * `created_at` (TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
    * `updated_at` (TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
 
-3. **Messages**
+6. **Messages** (Threaded conversation with polymorphic sender & chronological ordering)
    * `id` (INTEGER, PK, AUTOINCREMENT)
-   * `ticket_id` (INTEGER, FK -> tickets.id)
-   * `sender_id` (INTEGER, FK -> users.id)
+   * `ticket_id` (INTEGER, NOT NULL, FK -> Tickets.id ON DELETE CASCADE)
+   * `sender_id` (INTEGER, NOT NULL)
+   * `sender_type` (TEXT: `'client'`, `'agent'`, `'admin'`, `'user'`, NOT NULL - Identifies author table)
    * `text` (TEXT, NOT NULL)
    * `visibility` (TEXT: `'public'`, `'internal'`, DEFAULT `'public'`)
    * `created_at` (TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
+   * *Ordering:* Always queried with `ORDER BY created_at ASC, id ASC`.
 
-4. **Worksheet** (Active agent queue & workload tracking)
+7. **Worksheet** (Purpose: Active Agent Queue, Workload Management & Assignment History)
    * `id` (INTEGER, PK, AUTOINCREMENT)
-   * `ticket_id` (INTEGER, FK -> tickets.id)
-   * `agent_id` (INTEGER, FK -> users.id)
-   * `status` (TEXT)
-   * `assigned_at` (TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
+   * `ticket_id` (INTEGER, NOT NULL, FK -> Tickets.id ON DELETE CASCADE)
+   * `agent_id` (INTEGER, FK -> Agent.id ON DELETE SET NULL)
+   * `assigned_by` (INTEGER, NULLABLE, FK -> Agent.id)
+   * `reason` (TEXT: `'round_robin'`, `'manual_reassign'`, `'escalation'`)
+   * `status` (TEXT, NOT NULL)
+   * `created_at` (TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
+   * *Purpose & Recommendation:* Decouples current ticket status from assignment history. When a ticket is reassigned or escalated, a new row is appended to Worksheet. This guarantees a complete audit of who held the ticket, enables per-agent active workload calculations, and ensures tickets can be reassigned without losing historical context.
 
-5. **Audit Trail / Ticket Events** (Append-only change log)
+8. **Audit Trail** (Append-only compliance log)
    * `id` (INTEGER, PK, AUTOINCREMENT)
-   * `ticket_id` (INTEGER, FK -> tickets.id)
-   * `user_id` (INTEGER, FK -> users.id, NULLABLE)
-   * `event_type` (TEXT: `'created'`, `'assigned'`, `'reassigned'`, `'status_change'`, `'message_added'`, `'escalated'`)
+   * `ticket_id` (INTEGER, NOT NULL, FK -> Tickets.id ON DELETE CASCADE)
+   * `actor_type` (TEXT: `'client'`, `'agent'`, `'admin'`)
+   * `actor_id` (INTEGER, NOT NULL)
+   * `action` (TEXT: `'created'`, `'assigned'`, `'status_change'`, `'message_added'`, `'escalated'`)
    * `old_value` (TEXT, NULLABLE)
    * `new_value` (TEXT, NULLABLE)
    * `created_at` (TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
+
+9. **System Settings** (Persistent runtime configuration)
+   * `key` (TEXT, PK)
+   * `value` (TEXT, NOT NULL)
+   * *Used for:* `last_assigned_agent_id` for round-robin pointer persistence across server restarts.
 
 ---
 
 ## Functional Requirements
 
-### 1. Authentication & Login-Based Access Control (RBAC)
-* **Login Endpoint:** `POST /api/auth/login` with email and password, returning user info and session token/role.
+### 1. Authentication & Login-Based Access Control
+* **Authentication:** Passwords must be encrypted/hashed (never stored in plain text).
 * **Role-Based Access Permissions:**
-  * **Client / Requester:**
-    * Can view, search, and list only tickets where `requester_id = current_user.id`.
+  * **Client:**
+    * Authenticated by Client table.
+    * Can view, list, and search only their own tickets (`client_id = current_client.id`).
     * Can create tickets (`POST /api/tickets`).
     * Can post public replies (`POST /api/tickets/{id}/messages` with `visibility = 'public'`).
     * Forbidden (`403`) from posting or viewing internal agent notes.
   * **Agent:**
-    * Can view assigned tickets and the general ticket queue.
-    * Can be assigned tickets automatically (round-robin) or manually.
-    * Can post public replies (to client) and private internal notes (`visibility = 'internal'`).
-    * Can update ticket status (`open` -> `pending` -> `solved`).
+    * Authenticated by Agent table (`role = 'agent'`).
+    * Can view assigned tickets and the unassigned queue.
+    * Assigned tickets automatically via round-robin or manual reassignment.
+    * Can post public replies and private internal notes (`visibility = 'internal'`).
+    * Can transition ticket status (`open` -> `pending` -> `solved`).
   * **Admin:**
-    * Full system access: manage users/agents, reassign tickets, view full worksheets and audit logs.
-    * Can trigger ticket escalations and modify closed tickets if necessary.
+    * Authenticated by Agent table (`role = 'admin'`).
+    * Unrestricted access across all tickets, agents, reports, and escalations.
+    * Can reassign tickets and trigger SLA escalation runs (`POST /api/escalations/run`).
 
 ---
 
-### 2. Core Workflows & API Specifications
+### 2. Core Workflows & Business Rules
 
-#### 1. Create User / Agent
-1. `POST /api/users` (or `POST /api/clients`, `POST /api/agents`) with `name`, `email`, `password`, and `role` (`'client'`, `'agent'`, `'admin'`).
-2. Validate non-empty name, valid email, and acceptable role.
-3. Check email uniqueness; return `409 Conflict` if email already exists.
-4. Save with `is_active = 1` and return `201 Created`.
+#### 1. User & Client Registration
+* `POST /api/clients` with `name`, `email`, `password`. Validates input, encrypts password, returns 201.
+* `POST /api/agents` (Admin only) with `name`, `email`, `password`, `role`. Returns 201.
 
 #### 2. Create Ticket (Core)
-1. `POST /api/tickets` with `title`, `description`, `priority` (and authenticated requester).
-2. Validate input; invalid input returns `422 Unprocessable Entity`.
-3. Set initial status to `'open'` and calculate `due_at` from SLA priority (`urgent` < `high` < `medium` < `low`).
-4. Assign agent via round-robin.
-5. Create Worksheet record, write an Audit row (`event_type: 'created'`), and return `201 Created`.
+* `POST /api/tickets` with `title`, `description`, `priority`.
+* Calculates SLA `due_at` from priority:
+  * `urgent`: 1 hour
+  * `high`: 4 hours
+  * `normal`: 24 hours
+  * `low`: 48 hours
+* Assigns next active agent via round-robin.
+* Records ticket, inserts initial Worksheet row, writes Audit log (`action: 'created'`), returns 201.
 
-#### 3. Assign / Reassign: Round-Robin (Core)
-1. Fetch active agents sorted by `id`, check last assigned agent pointer.
-2. Select next agent, wrapping around at the end. If no active agents exist, leave `assignee_id = NULL`.
-3. Save Worksheet row, update ticket `assignee_id`, update pointer, and record an audit row in one transaction.
-4. **Manual Reassign:** `POST /api/tickets/{id}/assign` with `agent_id`. Verify ticket is not closed and target agent is active; record Worksheet and audit log.
+#### 3. Assign / Reassign via Worksheet
+* **Round-robin:** Cycles through active agents in ascending ID order, updating pointer in settings.
+* **Manual Reassignment:** `POST /api/tickets/{id}/assign` with `agent_id`. Validates ticket is not closed, inserts new Worksheet row, updates ticket `agent_id`, writes Audit log. Pointer does not move.
 
-#### 4. Add Messages / Comments (Core)
-1. `POST /api/tickets/{id}/messages` with `text` and `visibility` (`'public'` or `'internal'`).
-2. Return `404 Not Found` if ticket does not exist; return `403 Forbidden` if a client attempts to add an internal note.
-3. Persist the message with timestamp and `sender_id`.
-4. **Auto-Status Transition:**
-   * Agent reply $\rightarrow$ auto-update status to `'pending'` (waiting on customer).
-   * Client reply $\rightarrow$ auto-update status to `'open'` (needs agent attention).
-   * If ticket is `'closed'` $\rightarrow$ reject with `400 Bad Request`.
-5. Write an audit row recording message addition and any status transition; return `201 Created`.
+#### 4. Threaded Conversation & Auto-Status
+* `POST /api/tickets/{id}/messages` with `text`, `visibility`.
+* Records `sender_type` (`client` vs `agent`).
+* **Auto-Status Rules:**
+  * Agent reply $\rightarrow$ auto-transitions status to `'pending'`.
+  * Client reply $\rightarrow$ auto-transitions status to `'open'`.
+  * Reply to `'closed'` ticket $\rightarrow$ rejected with `400 Bad Request`.
+* Messages ordered strictly chronologically (`ORDER BY created_at ASC, id ASC`).
 
----
-
-### 3. Stretch Goals & Non-Functional Requirements
-1. **Filters & Views:** Filter tickets by status (`open`, `pending`, `solved`, `closed`), priority, or assigned agent.
-2. **Escalation Flow:** Detect overdue tickets (`due_at < NOW`) and auto-escalate priority to `'urgent'` or reassign to admin.
-3. **Audit Trail:** Append-only event history queryable via `GET /api/tickets/{id}/audit`.
-4. **Performance:** Sub-millisecond SQLite queries using WAL mode and composite indexes.
-5. **Data Persistence:** Complete persistence across server restarts using SQLite.
+#### 5. SLA Breach & Escalation
+* Periodic check or on-demand `POST /api/escalations/run`.
+* For tickets where `due_at < NOW` and status is `'open'` or `'pending'`:
+  * Updates status to `'sla_breached'` or `'escalated'`.
+  * Bumps priority one level (`low` $\rightarrow$ `normal` $\rightarrow$ `high` $\rightarrow$ `urgent`).
+  * Reassigns to Admin agent.
+  * Records new Worksheet row and Audit entry.
