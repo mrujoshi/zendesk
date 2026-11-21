@@ -144,3 +144,23 @@ python3 ../backend/seed.py
 * **Admin:** `asha@demo.com` (`user_type`: `agent`)
 * **Agents:** `priya@demo.com`, `rahul@demo.com`, `mrudula@support.com`, `monali@support.com` (`user_type`: `agent`)
 * **Client:** `ravi@demo.com`, `support@acme.com` (`user_type`: `client`)
+
+---
+
+## 🧪 API Testing with Bruno
+
+A complete, Git-friendly **Bruno API Testing Collection** is included in [`/bruno`](file:///Users/mrudula/Projects/Zendesk/zendesk/bruno).
+
+### Using the Collection in Bruno:
+1. Open the [Bruno app](https://www.usebruno.com/).
+2. Click **Open Collection** and select the [`bruno`](file:///Users/mrudula/Projects/Zendesk/zendesk/bruno) directory in this repo.
+3. Select the **Local** environment (top-right dropdown).
+4. Run `Auth / Login (Agent)` or `Auth / Login (Client)`. The Bearer `token` variable is **automatically captured** and passed into subsequent requests!
+
+### Organized Test Suites:
+* **`Auth/`**: Login as Client, Agent, Admin; Who Am I (`/me`); Logout token revocation.
+* **`Tickets/`**: Create Ticket (auto-assigns agent), Filter Tickets, Ticket Detail, Status Transitions, Manual Reassignment.
+* **`Messages/`**: Post public reply (auto-sets `pending`), post internal note, get conversation thread.
+* **`Audit/`**: Get immutable audit trail for ticket.
+* **`Reports & Escalations/`**: Daily breakdown metrics, trigger SLA escalation job.
+* **`Users & Directory/`**: Register Client, Create Agent, List Agents & Clients.

@@ -1,0 +1,22 @@
+meta {
+  name: Add Internal Note
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/tickets/{{ticketId}}/messages
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "text": "Internal Note: verified database session TTL is set to 28800s. Needs Redis flush.",
+    "visibility": "internal"
+  }
+}

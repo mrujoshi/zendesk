@@ -1,0 +1,24 @@
+meta {
+  name: List Tickets
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/tickets?status=open&priority=&escalated=&agent_id=&limit=20&offset=0
+  body: none
+  auth: bearer
+}
+
+params:query {
+  status: open
+  ~priority: high
+  ~escalated: false
+  ~agent_id: 2
+  limit: 20
+  offset: 0
+}
+
+auth:bearer {
+  token: {{token}}
+}

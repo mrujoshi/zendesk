@@ -1,0 +1,19 @@
+meta {
+  name: Get Daily Report
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/reports/daily?day=2026-11-21
+  body: none
+  auth: bearer
+}
+
+params:query {
+  day: 2026-11-21
+}
+
+auth:bearer {
+  token: {{token}}
+}
