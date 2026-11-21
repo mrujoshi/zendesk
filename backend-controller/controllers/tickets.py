@@ -23,9 +23,9 @@ def assign_round_robin(ticket_id: int) -> int | None:
     """Call inside a transaction. Returns the chosen agent id, or None if no agents."""
     agent_id = rules.next_agent(models.active_agent_ids(), models.get_last_assigned())
     if agent_id is not None:
-        models.assign(ticket_id, agent_id, assigned_by="system", reason="round_robin")
+        models.assign(ticket_id, agent_id, assigned_by=None, reason="round_robin")
         models.set_last_assigned(agent_id)
-        models.audit(ticket_id, "system", None, "assigned", None, str(agent_id))
+        models.audit(ticket_id, SYSTEM.type, SYSTEM.id, "assigned", None, str(agent_id))
     return agent_id
 
 
@@ -92,7 +92,7 @@ def reassign(ticket_id: int, body: AssignRequest, actor: Actor = Depends(current
     if t["agent_id"] == body.agent_id:
         return t
     with models.transaction():
-        models.assign(ticket_id, body.agent_id, assigned_by=actor.type, reason="manual")
+        models.assign(ticket_id, body.agent_id, assigned_by=actor.id, reason="manual_reassign")
         models.audit(ticket_id, actor.type, actor.id, "assigned",
                      str(t["agent_id"]) if t["agent_id"] else None, str(body.agent_id))
     return models.get_ticket(ticket_id)
@@ -136,10 +136,10 @@ def escalate_overdue() -> list[int]:
         admin = models.admin_id()
         with models.transaction():
             models.escalate(t["id"], new_p)
-            models.audit(t["id"], SYSTEM.type, None, "escalated", t["priority"], new_p)
+            models.audit(t["id"], SYSTEM.type, SYSTEM.id, "escalated", t["priority"], new_p)
             if admin is not None and admin != t["agent_id"]:
-                models.assign(t["id"], admin, assigned_by="system", reason="escalation")
-                models.audit(t["id"], SYSTEM.type, None, "assigned",
+                models.assign(t["id"], admin, assigned_by=None, reason="escalation")
+                models.audit(t["id"], SYSTEM.type, SYSTEM.id, "assigned",
                              str(t["agent_id"]) if t["agent_id"] else None, str(admin))
         done.append(t["id"])
     return done

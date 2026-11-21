@@ -2,7 +2,7 @@
 
 Run the backend: `.venv/bin/uvicorn main:app --reload`, then open http://127.0.0.1:8000/docs
 
-## For Mrudula (Model): replace `models.py` with the SQLite version, keeping these exact functions
+## Model functions (`models.py`, implemented on SQLite): the controller calls only these
 
 | Function | Returns |
 |---|---|

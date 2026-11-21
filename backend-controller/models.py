@@ -1,230 +1,297 @@
 """
-TEMPORARY IN-MEMORY STUB of the Model layer, so the Controller can be built and tested alone.
+Model layer on SQLite. All SQL lives here; the controller only calls these functions.
 
->>> At merge time Mrudula's SQLite models.py replaces this file. <<<
-It must keep the SAME function names, arguments and return shapes (see CONTRACT.md).
-Data here is lost on restart; the real one persists to SQLite.
+Uses Mrudula's backend/database.py (connection with foreign keys + WAL) and backend/schema.sql.
+Database file: backend/zendesk.db (override with the DB_PATH environment variable, e.g. for tests).
 """
+import importlib.util
+import os
+import sqlite3
+import threading
 from contextlib import contextmanager
-from itertools import count
+from pathlib import Path
 
 from rules import now
 
-_clients, _agents, _tickets, _messages, _worksheet, _audit = {}, {}, {}, [], [], []
-_settings: dict = {}
-_ids = {k: count(1) for k in ("client", "agent", "ticket", "message", "worksheet", "audit")}
+# Load Mrudula's backend/database.py by file path (not via sys.path), so files in backend/
+# can never shadow controller modules like main.py or rules.py.
+BACKEND_DIR = Path(__file__).resolve().parent.parent / "backend"
+_spec = importlib.util.spec_from_file_location("zendesk_database", BACKEND_DIR / "database.py")
+database = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(database)
+
+DB_PATH = Path(os.getenv("DB_PATH", database.DEFAULT_DB_PATH))
+
+# FastAPI runs sync routes in a thread pool and sqlite3 connections can't be shared
+# across threads, so each thread gets its own connection.
+_local = threading.local()
 
 
-_sessions: dict = {}
+def _conn() -> sqlite3.Connection:
+    conn = getattr(_local, "conn", None)
+    if conn is None:
+        conn = database.get_db_connection(DB_PATH)
+        conn.isolation_level = None  # autocommit; transaction() below issues BEGIN/COMMIT
+        conn.execute("PRAGMA busy_timeout = 5000;")  # wait for a lock instead of failing at once
+        _local.conn = conn
+        _local.depth = 0
+    return conn
 
 
 def init():
-    """Real version: create tables if missing. Stub: seed demo users once (password: password123)."""
-    if not _agents:
-        from security import hash_password
-        pw = hash_password("password123")
-        create_agent("Admin Asha", "asha@demo.com", "admin", pw)
-        create_agent("Priya", "priya@demo.com", "agent", pw)
-        create_agent("Rahul", "rahul@demo.com", "agent", pw)
-        create_client("Ravi Customer", "ravi@demo.com", pw)
+    """Create tables if missing (safe to run every start). Seed data: python3 backend/seed.py"""
+    database.init_db(DB_PATH)
 
 
 @contextmanager
 def transaction():
-    """Real version: BEGIN ... COMMIT, ROLLBACK on exception."""
-    yield
+    """All writes inside commit together or not at all. Nested calls join the outer transaction.
+    BEGIN IMMEDIATE takes the write lock up front, so two requests can't both read the same
+    round-robin pointer and assign the same agent."""
+    conn = _conn()
+    if _local.depth == 0:
+        conn.execute("BEGIN IMMEDIATE")
+    _local.depth += 1
+    try:
+        yield
+    except BaseException:
+        _local.depth -= 1
+        if _local.depth == 0:
+            conn.execute("ROLLBACK")
+        raise
+    _local.depth -= 1
+    if _local.depth == 0:
+        conn.execute("COMMIT")
 
 
-def _public(u):
-    """Never return password_hash to the API."""
-    return {k: v for k, v in u.items() if k != "password_hash"}
+# ---------- helpers ----------
+def _ts(v):
+    """SQLite's CURRENT_TIMESTAMP gives '2026-11-21 10:30:00' (UTC, no zone). Return ISO UTC."""
+    if isinstance(v, str) and len(v) == 19 and v[10] == " ":
+        return v.replace(" ", "T") + "+00:00"
+    return v
 
 
-# ---- users ----
+def _row(r, drop=("password_hash",)):
+    if r is None:
+        return None
+    d = {k: r[k] for k in r.keys() if k not in drop}
+    for k in d:
+        if k.endswith("_at"):
+            d[k] = _ts(d[k])
+    return d
+
+
+def _one(sql, args=()):
+    return _conn().execute(sql, args).fetchone()
+
+
+def _all(sql, args=()):
+    return _conn().execute(sql, args).fetchall()
+
+
+def _exec(sql, args=()):
+    return _conn().execute(sql, args)
+
+
+def _agent_out(r):
+    d = _row(r)
+    if d:
+        d["is_active"] = bool(d["is_active"])
+    return d
+
+
+def _ticket_out(r):
+    d = _row(r)
+    if d:
+        d["is_escalated"] = bool(d["is_escalated"])
+    return d
+
+
+def _message_out(r):
+    """Schema columns are sender_type/sender_id; the API (and UI) call them author_type/author_id."""
+    d = _row(r)
+    if d:
+        d["author_type"] = d.pop("sender_type")
+        d["author_id"] = d.pop("sender_id")
+    return d
+
+
+# ---------- users ----------
 def create_client(name, email, password_hash):
-    c = {"id": next(_ids["client"]), "name": name, "email": email,
-         "password_hash": password_hash, "created_at": now()}
-    _clients[c["id"]] = c
-    return _public(c)
+    cur = _exec("INSERT INTO clients (name, email, password_hash, created_at) VALUES (?, ?, ?, ?)",
+                (name, email, password_hash, now()))
+    return get_client(cur.lastrowid)
 
 
 def create_agent(name, email, role, password_hash):
-    a = {"id": next(_ids["agent"]), "name": name, "email": email, "role": role,
-         "password_hash": password_hash, "is_active": True, "created_at": now()}
-    _agents[a["id"]] = a
-    return _public(a)
+    cur = _exec("INSERT INTO agents (name, email, role, password_hash, is_active, created_at) "
+                "VALUES (?, ?, ?, ?, 1, ?)", (name, email, role, password_hash, now()))
+    return get_agent(cur.lastrowid)
 
 
 def get_client(client_id):
-    c = _clients.get(client_id)
-    return _public(c) if c else None
+    return _row(_one("SELECT * FROM clients WHERE id = ?", (client_id,)))
 
 
 def get_agent(agent_id):
-    a = _agents.get(agent_id)
-    return _public(a) if a else None
+    return _agent_out(_one("SELECT * FROM agents WHERE id = ?", (agent_id,)))
 
 
 def find_for_login(user_type, email):
     """The only function that returns password_hash."""
-    table = _clients if user_type == "client" else _agents
-    return next((dict(u) for u in table.values() if u["email"].lower() == email.lower()), None)
+    table = "clients" if user_type == "client" else "agents"
+    r = _one(f"SELECT * FROM {table} WHERE lower(email) = lower(?)", (email,))
+    return _row(r, drop=()) if r else None
 
 
 def email_exists(kind, email):
-    table = _clients if kind == "client" else _agents
-    return any(u["email"].lower() == email.lower() for u in table.values())
+    table = "clients" if kind == "client" else "agents"
+    return _one(f"SELECT 1 FROM {table} WHERE lower(email) = lower(?)", (email,)) is not None
 
 
 def list_agents():
-    return [_public(a) for a in _agents.values()]
+    return [_agent_out(r) for r in _all("SELECT * FROM agents ORDER BY id")]
 
 
 def list_clients():
-    return [_public(c) for c in _clients.values()]
-
-
-# ---- sessions ----
-def create_session(token_hash, user_type, user_id, expires_at):
-    _sessions[token_hash] = {"token_hash": token_hash, "user_type": user_type, "user_id": user_id,
-                             "created_at": now(), "expires_at": expires_at, "revoked_at": None}
-
-
-def get_session(token_hash, now_iso):
-    """Valid session only: exists, not revoked, not expired."""
-    s = _sessions.get(token_hash)
-    if not s or s["revoked_at"] or s["expires_at"] <= now_iso:
-        return None
-    return dict(s)
-
-
-def revoke_session(token_hash):
-    if token_hash in _sessions:
-        _sessions[token_hash]["revoked_at"] = now()
+    return [_row(r) for r in _all("SELECT * FROM clients ORDER BY id")]
 
 
 def active_agent_ids():
-    """Agents eligible for round-robin (role 'agent', active)."""
-    return [a["id"] for a in _agents.values() if a["is_active"] and a["role"] == "agent"]
+    """Round-robin pool: active agents with role 'agent' (admins only get escalations)."""
+    return [r["id"] for r in _all("SELECT id FROM agents WHERE role = 'agent' AND is_active = 1 ORDER BY id")]
 
 
 def admin_id():
-    return next((a["id"] for a in _agents.values() if a["is_active"] and a["role"] == "admin"), None)
+    r = _one("SELECT id FROM agents WHERE role = 'admin' AND is_active = 1 ORDER BY id LIMIT 1")
+    return r["id"] if r else None
 
 
-# ---- round-robin pointer (settings table) ----
+# ---------- sessions ----------
+def create_session(token_hash, user_type, user_id, expires_at):
+    _exec("INSERT INTO sessions (token_hash, user_type, user_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+          (token_hash, user_type, user_id, now(), expires_at))
+
+
+def get_session(token_hash, now_iso):
+    return _row(_one("SELECT * FROM sessions WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?",
+                     (token_hash, now_iso)))
+
+
+def revoke_session(token_hash):
+    _exec("UPDATE sessions SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL", (now(), token_hash))
+
+
+# ---------- round-robin pointer ----------
 def get_last_assigned():
-    return _settings.get("last_assigned_agent_id")
+    r = _one("SELECT value FROM system_settings WHERE key = 'last_assigned_agent_id'")
+    return int(r["value"]) if r else None
 
 
 def set_last_assigned(agent_id):
-    _settings["last_assigned_agent_id"] = agent_id
+    _exec("INSERT INTO system_settings (key, value) VALUES ('last_assigned_agent_id', ?) "
+          "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (str(agent_id),))
 
 
-# ---- tickets ----
-def _current_agent(ticket_id):
-    rows = [w for w in _worksheet if w["ticket_id"] == ticket_id]
-    return rows[-1]["agent_id"] if rows else None
-
-
-def _out(t):
-    out = dict(t)
-    out["agent_id"] = _current_agent(t["id"])
-    return out
-
-
+# ---------- tickets ----------
 def create_ticket(client_id, title, description, priority, due_at):
     ts = now()
-    t = {"id": next(_ids["ticket"]), "client_id": client_id, "title": title,
-         "description": description, "status": "open", "priority": priority,
-         "is_escalated": False, "attachment_path": None, "created_at": ts,
-         "updated_at": ts, "solved_at": None, "due_at": due_at}
-    _tickets[t["id"]] = t
-    return _out(t)
+    cur = _exec("INSERT INTO tickets (title, description, status, priority, client_id, due_at, created_at, updated_at) "
+                "VALUES (?, ?, 'open', ?, ?, ?, ?, ?)", (title, description, priority, client_id, due_at, ts, ts))
+    return get_ticket(cur.lastrowid)
 
 
 def get_ticket(ticket_id):
-    t = _tickets.get(ticket_id)
-    return _out(t) if t else None
+    return _ticket_out(_one("SELECT * FROM tickets WHERE id = ?", (ticket_id,)))
 
 
 def list_tickets(status, priority, escalated, agent_id, client_id, limit, offset):
-    rows = [_out(t) for t in _tickets.values()]
+    where, args = [], []
     if status:
-        rows = [t for t in rows if t["status"] == status]
+        where.append("status = ?"); args.append(status)
     if priority:
-        rows = [t for t in rows if t["priority"] == priority]
+        where.append("priority = ?"); args.append(priority)
     if escalated is not None:
-        rows = [t for t in rows if t["is_escalated"] == escalated]
+        where.append("is_escalated = ?"); args.append(1 if escalated else 0)
     if agent_id:
-        rows = [t for t in rows if t["agent_id"] == agent_id]
+        where.append("agent_id = ?"); args.append(agent_id)
     if client_id:
-        rows = [t for t in rows if t["client_id"] == client_id]
-    rows.sort(key=lambda t: t["id"], reverse=True)  # newest first
-    return {"items": rows[offset:offset + limit], "total": len(rows), "limit": limit, "offset": offset}
+        where.append("client_id = ?"); args.append(client_id)
+    w = (" WHERE " + " AND ".join(where)) if where else ""
+    total = _one(f"SELECT COUNT(*) AS n FROM tickets{w}", args)["n"]
+    rows = _all(f"SELECT * FROM tickets{w} ORDER BY id DESC LIMIT ? OFFSET ?", [*args, limit, offset])
+    return {"items": [_ticket_out(r) for r in rows], "total": total, "limit": limit, "offset": offset}
 
 
 def update_status(ticket_id, status):
-    t = _tickets[ticket_id]
-    t["status"], t["updated_at"] = status, now()
-    t["solved_at"] = now() if status == "solved" else (t["solved_at"] if status == "closed" else None)
+    ts = now()
+    if status == "solved":
+        _exec("UPDATE tickets SET status = ?, solved_at = ?, updated_at = ? WHERE id = ?", (status, ts, ts, ticket_id))
+    elif status == "closed":  # keep solved_at
+        _exec("UPDATE tickets SET status = ?, updated_at = ? WHERE id = ?", (status, ts, ticket_id))
+    else:  # reopened: no longer solved
+        _exec("UPDATE tickets SET status = ?, solved_at = NULL, updated_at = ? WHERE id = ?", (status, ts, ticket_id))
 
 
 def assign(ticket_id, agent_id, assigned_by, reason):
-    _worksheet.append({"id": next(_ids["worksheet"]), "ticket_id": ticket_id, "agent_id": agent_id,
-                       "assigned_by": assigned_by, "reason": reason, "created_at": now()})
-    _tickets[ticket_id]["updated_at"] = now()
+    """Current agent lives on tickets.agent_id; every assignment is also appended to worksheet (history).
+    assigned_by = agent id of the person who did it, or None for the system."""
+    ts = now()
+    _exec("UPDATE tickets SET agent_id = ?, updated_at = ? WHERE id = ?", (agent_id, ts, ticket_id))
+    _exec("INSERT INTO worksheet (ticket_id, agent_id, assigned_by, reason, status, created_at) "
+          "SELECT id, ?, ?, ?, status, ? FROM tickets WHERE id = ?", (agent_id, assigned_by, reason, ts, ticket_id))
 
 
 def overdue_tickets(now_iso):
-    return [_out(t) for t in _tickets.values()
-            if t["due_at"] < now_iso and t["status"] in ("open", "pending") and not t["is_escalated"]]
+    return [_ticket_out(r) for r in _all(
+        "SELECT * FROM tickets WHERE status IN ('open', 'pending') AND is_escalated = 0 "
+        "AND due_at IS NOT NULL AND due_at < ? ORDER BY id", (now_iso,))]
 
 
 def escalate(ticket_id, new_priority):
-    t = _tickets[ticket_id]
-    t["priority"], t["is_escalated"], t["updated_at"] = new_priority, True, now()
+    _exec("UPDATE tickets SET priority = ?, is_escalated = 1, updated_at = ? WHERE id = ?",
+          (new_priority, now(), ticket_id))
 
 
-# ---- messages ----
+# ---------- messages ----------
 def add_message(ticket_id, author_type, author_id, text, visibility):
-    m = {"id": next(_ids["message"]), "ticket_id": ticket_id, "author_type": author_type,
-         "author_id": author_id, "text": text, "visibility": visibility, "created_at": now()}
-    _messages.append(m)
-    _tickets[ticket_id]["updated_at"] = now()
-    return dict(m)
+    ts = now()
+    cur = _exec("INSERT INTO messages (ticket_id, sender_id, sender_type, text, visibility, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)", (ticket_id, author_id, author_type, text, visibility, ts))
+    _exec("UPDATE tickets SET updated_at = ? WHERE id = ?", (ts, ticket_id))
+    return _message_out(_one("SELECT * FROM messages WHERE id = ?", (cur.lastrowid,)))
 
 
 def get_messages(ticket_id, include_internal):
-    return [dict(m) for m in _messages if m["ticket_id"] == ticket_id
-            and (include_internal or m["visibility"] == "public")]
+    vis = "" if include_internal else " AND visibility = 'public'"
+    return [_message_out(r) for r in _all(
+        f"SELECT * FROM messages WHERE ticket_id = ?{vis} ORDER BY created_at ASC, id ASC", (ticket_id,))]
 
 
-# ---- audit (append-only) ----
+# ---------- audit (append-only) ----------
 def audit(ticket_id, actor_type, actor_id, action, old_value, new_value):
-    _audit.append({"id": next(_ids["audit"]), "ticket_id": ticket_id, "actor_type": actor_type,
-                   "actor_id": actor_id, "action": action, "old_value": old_value,
-                   "new_value": new_value, "created_at": now()})
+    _exec("INSERT INTO audit (ticket_id, actor_type, actor_id, action, old_value, new_value, created_at) "
+          "VALUES (?, ?, ?, ?, ?, ?, ?)", (ticket_id, actor_type, actor_id, action, old_value, new_value, now()))
 
 
 def get_audit(ticket_id):
-    return [dict(a) for a in _audit if a["ticket_id"] == ticket_id]
+    return [_row(r) for r in _all("SELECT * FROM audit WHERE ticket_id = ? ORDER BY created_at ASC, id ASC",
+                                  (ticket_id,))]
 
 
-# ---- report ----
+# ---------- report ----------
 def daily_report(day):
-    ts = list(_tickets.values())
-    per_agent = {}
-    for t in ts:
-        a = _current_agent(t["id"])
-        if a and t["status"] in ("open", "pending"):
-            per_agent[a] = per_agent.get(a, 0) + 1
+    """'day' is YYYY-MM-DD in UTC. substr(...,1,10) works for both ISO and SQLite timestamp formats."""
+    one = lambda sql, *a: _one(sql, a)["n"]  # noqa: E731
+    per_agent = _all(
+        "SELECT a.id AS agent_id, a.name, COUNT(*) AS open FROM tickets t JOIN agents a ON a.id = t.agent_id "
+        "WHERE t.status IN ('open', 'pending') GROUP BY a.id, a.name ORDER BY open DESC, a.name")
     return {
         "date": day,
-        "created": sum(t["created_at"][:10] == day for t in ts),
-        "solved": sum((t["solved_at"] or "")[:10] == day for t in ts),
-        "open": sum(t["status"] in ("open", "pending") for t in ts),
-        "escalated": sum(t["is_escalated"] for t in ts),
-        "open_per_agent": [{"agent_id": k, "name": _agents[k]["name"], "open": v}
-                           for k, v in per_agent.items()],
+        "created": one("SELECT COUNT(*) AS n FROM tickets WHERE substr(created_at, 1, 10) = ?", day),
+        "solved": one("SELECT COUNT(*) AS n FROM tickets WHERE substr(solved_at, 1, 10) = ?", day),
+        "open": one("SELECT COUNT(*) AS n FROM tickets WHERE status IN ('open', 'pending')"),
+        "escalated": one("SELECT COUNT(*) AS n FROM tickets WHERE is_escalated = 1"),
+        "open_per_agent": [dict(r) for r in per_agent],
     }

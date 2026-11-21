@@ -38,7 +38,7 @@ React (V)  ──HTTP──>  Controller (C)  ──function calls──>  Model
 | `security.py` | Password hashing, token creation and hashing |
 | `sessions.sql` | `sessions` table to add to the Model's schema |
 | `rules.py` | Pure business rules (no DB, no FastAPI) |
-| `models.py` | **Temporary in-memory stub.** Replaced by the SQLite Model at merge |
+| `models.py` | Model on **SQLite**: all SQL lives here. Uses `../backend/database.py` and `../backend/schema.sql`; DB file `../backend/zendesk.db` (override with `DB_PATH`) |
 | `CONTRACT.md` | Function list for the Model, endpoint list for the UI |
 
 ## Run
@@ -162,10 +162,14 @@ Every error has one shape:
 | 422 | Invalid input |
 | 500 | Unexpected error (logged, server keeps running) |
 
-## Merge plan
-1. **Model:** Mrudula's SQLite `models.py` replaces the stub with the same function names (see `CONTRACT.md`).
-2. **UI:** React calls `/api/...` and sends the two headers.
-3. **Check:** create a ticket, restart the server, and confirm the data is still there.
+## Database (SQLite)
+- `models.py` loads Mrudula's `backend/database.py` (foreign keys on, WAL mode) and runs `schema.sql` on startup (`CREATE TABLE IF NOT EXISTS`, safe every time).
+- Seed demo data once: `python3 ../backend/seed.py` (wipes and refills the tables).
+- Data survives a server restart (tested: create ticket + message, restart, still there; tokens still valid).
+- Each request thread gets its own SQLite connection; writes run in `BEGIN IMMEDIATE` transactions, so parallel ticket creation never gives two tickets the same round-robin agent (tested with 8 at once).
+- Current agent is `tickets.agent_id`; every assignment is also appended to `worksheet` (history).
+- System actions (round-robin, escalation) are recorded with `actor_type = 'system'`, `actor_id = 0` in `audit`, and `assigned_by = NULL` in `worksheet`.
+- The schema's `sender_type` / `sender_id` columns are returned as `author_type` / `author_id` (what the UI reads).
 
 ## Why status is a constant, not a table
 Statuses never change while the app runs, and the rules about them (which moves are allowed) must live in code anyway.

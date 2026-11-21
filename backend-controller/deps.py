@@ -14,7 +14,8 @@ class Actor:
     id: int | None
 
 
-SYSTEM = Actor("system", None)
+# System actions (round-robin, escalation). audit.actor_id is NOT NULL, so the system uses id 0.
+SYSTEM = Actor("system", 0)
 
 
 def bearer_token(authorization: str | None = Header(None)) -> str:
