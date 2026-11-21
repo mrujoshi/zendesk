@@ -15,6 +15,14 @@
 
 ---
 
+## 📚 Documentation & Guides
+
+* 📖 **Product Manual & User Guide:** [PRODUCT_MANUAL.md](file:///Users/mrudula/Projects/Zendesk/zendesk/PRODUCT_MANUAL.md) — Comprehensive operations guide covering end-user ticket submission, support agent workflows, AI support assistant, team administration, and keyboard shortcuts.
+* 🗄️ **Entity Relationship Diagram (ERD):** [ERD.md](file:///Users/mrudula/Projects/Zendesk/zendesk/ERD.md) — Complete visual relational schema, foreign key constraints, and performance indexes.
+* 📝 **Project & Architecture Notes:** [notes.md](file:///Users/mrudula/Projects/Zendesk/zendesk/notes.md) — Architectural deep-dive covering the immutable Audit Trail, state machines, and design trade-offs.
+
+---
+
 ## 🏛️ System Architecture (MVC)
 
 The system enforces strict separation of concerns across layers:
