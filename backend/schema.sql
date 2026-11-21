@@ -30,7 +30,9 @@ CREATE TABLE IF NOT EXISTS agents (
     role TEXT NOT NULL CHECK(role IN ('admin', 'agent')),
     password_hash TEXT NOT NULL,
     is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0, 1)),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    client_id INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL
 );
 
 -- 4. Status Table (Defined lifecycle & SLA breach / escalation states)
@@ -152,3 +154,4 @@ CREATE INDEX IF NOT EXISTS idx_audit_ticket ON audit(ticket_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_type, user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_lookup ON sessions(token_hash, revoked_at, expires_at);
 CREATE INDEX IF NOT EXISTS idx_agent_clients_client ON agent_clients(client_id);
+CREATE INDEX IF NOT EXISTS idx_agents_client ON agents(client_id);

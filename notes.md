@@ -37,6 +37,7 @@
    * `role` (TEXT: `'admin'`, `'agent'`, NOT NULL)
    * `password_hash` (TEXT, NOT NULL - Encrypted password)
    * `is_active` (INTEGER, DEFAULT 1)
+   * `client_id` (INTEGER, NULLABLE, FK -> Client.id)
    * `created_at` (TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
 
 4. **Status** (Ticket Lifecycle & SLA State Definitions)

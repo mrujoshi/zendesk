@@ -10,6 +10,7 @@ This document visualizes and describes the complete relational database architec
 erDiagram
     CLIENTS ||--o{ TICKETS : "files (client_id)"
     AGENTS ||--o{ TICKETS : "assigned to (agent_id)"
+    CLIENTS ||--o{ AGENTS : "dedicated agent (client_id)"
     TICKETS ||--o{ MESSAGES : "contains (ticket_id)"
     TICKETS ||--o{ WORKSHEET : "tracked in (ticket_id)"
     AGENTS ||--o{ WORKSHEET : "assigned to (agent_id)"
@@ -32,6 +33,7 @@ erDiagram
         string role "admin | agent"
         string password_hash "Encrypted Password"
         int is_active "1=Active, 0=Disabled"
+        int client_id FK "References CLIENTS.id (Nullable)"
         timestamp created_at "Registration time"
     }
 
@@ -123,6 +125,7 @@ erDiagram
 ### 1. Tickets $\leftrightarrow$ Clients & Agents
 * **`CLIENTS` (1) $\rightarrow$ `TICKETS` (N):** Every ticket must be created by a valid client (`client_id` with `FOREIGN KEY ... ON DELETE RESTRICT`).
 * **`AGENTS` (1) $\rightarrow$ `TICKETS` (N):** Tickets are assigned to support agents (`agent_id` with `FOREIGN KEY ... ON DELETE SET NULL`). `agent_id` is nullable to cleanly represent unassigned tickets in the incoming queue.
+* **`CLIENTS` (1) $\rightarrow$ `AGENTS` (N):** An agent can have a dedicated primary client assigned via `client_id` (`FOREIGN KEY ... ON DELETE SET NULL`). Nullable for general/global pool agents.
 
 ### 2. Threaded Messages (`TICKETS` $\rightarrow$ `MESSAGES`)
 * **`TICKETS` (1) $\rightarrow$ `MESSAGES` (N):** A ticket contains an ordered stream of back-and-forth messages (`ticket_id` with `ON DELETE CASCADE`).

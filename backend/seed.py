@@ -103,19 +103,19 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
 
     # 3. Seed 10 Agents
     agents = [
-        ("Admin Asha", "asha@demo.com", "admin", default_pwd_hash, 1),
-        ("Priya Agent", "priya@demo.com", "agent", default_pwd_hash, 1),
-        ("Rahul Agent", "rahul@demo.com", "agent", default_pwd_hash, 1),
-        ("Mrudula", "mrudula@support.com", "agent", default_pwd_hash, 1),
-        ("Monali", "monali@support.com", "agent", default_pwd_hash, 1),
-        ("Mrunnayee", "mrunnayee@support.com", "admin", default_pwd_hash, 1),
-        ("Amit Joshi", "amit@support.com", "agent", default_pwd_hash, 1),
-        ("Sneha Patil", "sneha@support.com", "agent", default_pwd_hash, 1),
-        ("Kunal Shinde", "kunal@support.com", "agent", default_pwd_hash, 1),
-        ("Divya Nair", "divya@support.com", "agent", default_pwd_hash, 1),
+        ("Admin Asha", "asha@demo.com", "admin", default_pwd_hash, 1, None),
+        ("Priya Agent", "priya@demo.com", "agent", default_pwd_hash, 1, 1),
+        ("Rahul Agent", "rahul@demo.com", "agent", default_pwd_hash, 1, 2),
+        ("Mrudula", "mrudula@support.com", "agent", default_pwd_hash, 1, None),
+        ("Monali", "monali@support.com", "agent", default_pwd_hash, 1, None),
+        ("Mrunnayee", "mrunnayee@support.com", "admin", default_pwd_hash, 1, None),
+        ("Amit Joshi", "amit@support.com", "agent", default_pwd_hash, 1, 3),
+        ("Sneha Patil", "sneha@support.com", "agent", default_pwd_hash, 1, 4),
+        ("Kunal Shinde", "kunal@support.com", "agent", default_pwd_hash, 1, None),
+        ("Divya Nair", "divya@support.com", "agent", default_pwd_hash, 1, None),
     ]
     cursor.executemany(
-        "INSERT INTO agents (name, email, role, password_hash, is_active) VALUES (?, ?, ?, ?, ?);",
+        "INSERT INTO agents (name, email, role, password_hash, is_active, client_id) VALUES (?, ?, ?, ?, ?, ?);",
         agents
     )
 
