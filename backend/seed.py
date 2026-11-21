@@ -1,10 +1,17 @@
 """
 Seed script to populate Mini-Zendesk with realistic initial data.
-Useful for local development and live hackathon demos.
+Matches schema.sql and notes.md specifications.
 """
 
+from datetime import datetime, timezone, timedelta
+import hashlib
 from pathlib import Path
 from database import get_db_connection, init_db, DEFAULT_DB_PATH
+
+
+def hash_password(password: str) -> str:
+    # Standard SHA-256 hash for fast, zero-dependency demo authentication
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
 def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
@@ -14,32 +21,41 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
     conn = get_db_connection(db_path)
     cursor = conn.cursor()
 
-    # Clear existing demo data
+    # Clear existing demo data in reverse dependency order
+    cursor.execute("DELETE FROM system_settings;")
     cursor.execute("DELETE FROM ticket_events;")
+    cursor.execute("DELETE FROM worksheet;")
     cursor.execute("DELETE FROM messages;")
     cursor.execute("DELETE FROM tickets;")
     cursor.execute("DELETE FROM users;")
 
-    # 1. Insert Users (Agents & Customers)
+    # 1. Insert Users (Agents, Admin, and Clients)
+    # Default password for all seed accounts: 'password123'
+    default_pwd_hash = hash_password("password123")
+
     users = [
-        ("Mrudula", "mrudula@support.com", "agent"),
-        ("Monali", "monali@support.com", "agent"),
-        ("Mrunnayee", "mrunnayee@support.com", "admin"),
-        ("Alice Johnson", "alice@clientcorp.com", "customer"),
-        ("Bob Smith", "bob@acme.com", "customer"),
-        ("Charlie Brown", "charlie@globex.com", "customer"),
+        ("Mrudula", "mrudula@support.com", default_pwd_hash, "agent", 1),
+        ("Monali", "monali@support.com", default_pwd_hash, "agent", 1),
+        ("Mrunnayee", "mrunnayee@support.com", default_pwd_hash, "admin", 1),
+        ("Alice Johnson", "alice@clientcorp.com", default_pwd_hash, "client", 1),
+        ("Bob Smith", "bob@acme.com", default_pwd_hash, "client", 1),
+        ("Charlie Brown", "charlie@globex.com", default_pwd_hash, "client", 1),
     ]
 
     cursor.executemany(
-        "INSERT INTO users (name, email, role) VALUES (?, ?, ?);",
+        """
+        INSERT INTO users (name, email, password_hash, role, is_active)
+        VALUES (?, ?, ?, ?, ?);
+        """,
         users
     )
 
-    # Fetch user IDs for foreign keys
+    # Fetch user IDs
     cursor.execute("SELECT id, name FROM users;")
     user_map = {row["name"]: row["id"] for row in cursor.fetchall()}
 
-    # 2. Insert Tickets
+    # 2. Insert Tickets with SLA Due Dates
+    now = datetime.now(timezone.utc)
     tickets = [
         (
             "Cannot access admin dashboard",
@@ -47,7 +63,8 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
             "open",
             "urgent",
             user_map["Alice Johnson"],
-            user_map["Mrudula"]
+            user_map["Mrudula"],
+            (now + timedelta(hours=4)).isoformat()
         ),
         (
             "Invoice request for October subscription",
@@ -55,7 +72,8 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
             "pending",
             "low",
             user_map["Bob Smith"],
-            user_map["Monali"]
+            user_map["Monali"],
+            (now + timedelta(hours=48)).isoformat()
         ),
         (
             "Feature Request: Dark mode theme",
@@ -63,7 +81,8 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
             "open",
             "medium",
             user_map["Charlie Brown"],
-            None  # Unassigned
+            None,  # Unassigned
+            (now + timedelta(hours=24)).isoformat()
         ),
         (
             "Password reset link expired immediately",
@@ -71,14 +90,15 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
             "solved",
             "high",
             user_map["Alice Johnson"],
-            user_map["Mrudula"]
+            user_map["Mrudula"],
+            (now + timedelta(hours=8)).isoformat()
         ),
     ]
 
     cursor.executemany(
         """
-        INSERT INTO tickets (title, description, status, priority, requester_id, assignee_id)
-        VALUES (?, ?, ?, ?, ?, ?);
+        INSERT INTO tickets (title, description, status, priority, requester_id, assignee_id, due_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?);
         """,
         tickets
     )
@@ -112,7 +132,18 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
         messages
     )
 
-    # 4. Insert Initial Audit Trail Events
+    # 4. Insert Worksheet Rows (Active Agent Queues)
+    worksheet_rows = [
+        (t1_id, user_map["Mrudula"], "open"),
+        (t2_id, user_map["Monali"], "pending"),
+        (t4_id, user_map["Mrudula"], "solved"),
+    ]
+    cursor.executemany(
+        "INSERT INTO worksheet (ticket_id, agent_id, status) VALUES (?, ?, ?);",
+        worksheet_rows
+    )
+
+    # 5. Insert Audit Trail Events
     events = [
         (t1_id, user_map["Alice Johnson"], "created", None, "open"),
         (t1_id, user_map["Mrunnayee"], "assigned", None, "Mrudula"),
@@ -127,6 +158,13 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
         VALUES (?, ?, ?, ?, ?);
         """,
         events
+    )
+
+    # 6. Initialize Round-Robin Pointer in system_settings
+    # Pointer points to the last assigned agent ID (Mrudula)
+    cursor.execute(
+        "INSERT INTO system_settings (key, value) VALUES (?, ?);",
+        ("last_assigned_agent_id", str(user_map["Mrudula"]))
     )
 
     conn.commit()
