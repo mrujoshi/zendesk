@@ -45,9 +45,14 @@ def status_after_reply(current: str, author_type: str) -> str:
     return (Status.PENDING if author_type == "agent" else Status.OPEN).value
 
 
-def due_at(priority: str) -> str:
+def due_at(priority: str, created_at: str | None = None) -> str:
+    """SLA deadline = creation time + SLA for the priority. Used at creation (now) and when
+    priority changes (from the ticket's original created_at, like Zendesk SLA policies)."""
+    start = datetime.fromisoformat(created_at) if created_at else datetime.now(timezone.utc)
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
     delta = timedelta(**{SLA_UNIT: SLA[Priority(priority)]})
-    return (datetime.now(timezone.utc) + delta).isoformat(timespec="seconds")
+    return (start + delta).isoformat(timespec="seconds")
 
 
 def escalated_priority(priority: str) -> str:

@@ -6,22 +6,33 @@ import rules
 from deps import SYSTEM, Actor, current_actor, require_staff
 from rules import RuleError
 from constants import Priority, Status, Visibility
-from schemas import AssignRequest, MessageCreate, StatusUpdate, TicketCreate
+from schemas import AssignRequest, MessageCreate, PriorityUpdate, StatusUpdate, TicketCreate
 
 router = APIRouter(tags=["tickets"])
 
 
+def scope_client_ids(actor: Actor) -> list[int] | None:
+    """Which clients' tickets this actor may see. None = no limit (admin)."""
+    if actor.type == "client":
+        return [actor.id]
+    if actor.type == "agent":
+        return models.linked_client_ids(actor.id)  # configured by the admin (agent_clients)
+    return None
+
+
 def get_or_404(ticket_id: int, actor: Actor) -> dict:
     t = models.get_ticket(ticket_id)
-    # A client asking for someone else's ticket gets 404, not 403 (don't reveal it exists)
-    if not t or (actor.type == "client" and t["client_id"] != actor.id):
+    scope = scope_client_ids(actor)
+    # Outside your scope = 404, not 403: don't reveal that the ticket exists
+    if not t or (scope is not None and t["client_id"] not in scope):
         raise RuleError(404, "not_found", "Ticket not found")
     return t
 
 
-def assign_round_robin(ticket_id: int) -> int | None:
-    """Call inside a transaction. Returns the chosen agent id, or None if no agents."""
-    agent_id = rules.next_agent(models.active_agent_ids(), models.get_last_assigned())
+def assign_round_robin(ticket_id: int, client_id: int) -> int | None:
+    """Call inside a transaction. Picks the next active agent LINKED to this client.
+    Nobody linked -> None: the ticket stays unassigned for the admin (option A)."""
+    agent_id = rules.next_agent(models.active_agent_ids(client_id), models.get_last_assigned())
     if agent_id is not None:
         models.assign(ticket_id, agent_id, assigned_by=None, reason="round_robin")
         models.set_last_assigned(agent_id)
@@ -37,7 +48,7 @@ def create_ticket(body: TicketCreate, actor: Actor = Depends(current_actor)):
     with models.transaction():
         t = models.create_ticket(actor.id, body.title, body.description, p, rules.due_at(p))
         models.audit(t["id"], actor.type, actor.id, "created", None, "open")
-        assign_round_robin(t["id"])
+        assign_round_robin(t["id"], actor.id)
     return models.get_ticket(t["id"])
 
 
@@ -56,9 +67,10 @@ def list_tickets(
         priority=priority.value if priority else None,
         escalated=escalated,
         agent_id=agent_id,
-        client_id=actor.id if actor.type == "client" else None,  # clients see only their own
+        client_id=None,
         limit=limit,
         offset=offset,
+        client_ids=scope_client_ids(actor),  # client: own; agent: linked clients; admin: all
     )
 
 
@@ -83,6 +95,23 @@ def change_status(ticket_id: int, body: StatusUpdate, actor: Actor = Depends(cur
     return models.get_ticket(ticket_id)
 
 
+@router.patch("/tickets/{ticket_id}/priority", summary="Change priority (staff); SLA deadline recalculated")
+def change_priority(ticket_id: int, body: PriorityUpdate, actor: Actor = Depends(current_actor)):
+    require_staff(actor)
+    new = body.priority.value
+    with models.transaction():  # read + check + write under one lock (see change_status)
+        t = get_or_404(ticket_id, actor)
+        if t["status"] not in (Status.OPEN, Status.PENDING):
+            raise RuleError(400, "ticket_not_active", f"Cannot change priority of a {t['status']} ticket")
+        if t["priority"] == new:
+            raise RuleError(400, "no_change", f"Priority is already {new}")
+        # New deadline counts from when the ticket was created, not from now. Raising priority on
+        # an old ticket can make it overdue at once; the escalation job then handles it.
+        models.update_priority(ticket_id, new, rules.due_at(new, t["created_at"]))
+        models.audit(ticket_id, actor.type, actor.id, "priority", t["priority"], new)
+    return models.get_ticket(ticket_id)
+
+
 @router.post("/tickets/{ticket_id}/assign", summary="Manual reassign (pointer not moved)")
 def reassign(ticket_id: int, body: AssignRequest, actor: Actor = Depends(current_actor)):
     require_staff(actor)
@@ -92,6 +121,8 @@ def reassign(ticket_id: int, body: AssignRequest, actor: Actor = Depends(current
             raise RuleError(400, "ticket_closed", "Cannot reassign a closed ticket")
         if body.agent_id not in models.active_agent_ids():
             raise RuleError(400, "invalid_agent", "Agent not found or inactive")
+        if body.agent_id not in models.active_agent_ids(t["client_id"]):
+            raise RuleError(400, "agent_not_linked", "Agent has no access to this client")
         if t["agent_id"] == body.agent_id:
             return t
         models.assign(ticket_id, body.agent_id, assigned_by=actor.id, reason="manual_reassign")

@@ -60,6 +60,7 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
 
     # Clear existing data in reverse dependency order
     cursor.execute("DELETE FROM sessions;")
+    cursor.execute("DELETE FROM agent_clients;")
     cursor.execute("DELETE FROM audit;")
     cursor.execute("DELETE FROM worksheet;")
     cursor.execute("DELETE FROM messages;")
@@ -146,6 +147,17 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
     admin_ids = [row["id"] for row in cursor.fetchall()]
     admin_id = admin_ids[0]
 
+    # Agent <-> client access: each client gets 2 agents, each agent 2-3 clients.
+    # e.g. Acme -> Priya + Monali, Globex -> Rahul + Amit. Admins see everything.
+    client_agents = {
+        cid: [agent_ids[j % len(agent_ids)], agent_ids[(j + 3) % len(agent_ids)]]
+        for j, cid in enumerate(client_ids)
+    }
+    cursor.executemany(
+        "INSERT INTO agent_clients (agent_id, client_id) VALUES (?, ?);",
+        [(aid, cid) for cid, aids in client_agents.items() for aid in aids]
+    )
+
     # 5. Generate Exactly 100 Realistic Tickets
     # Distribution of statuses:
     #   open: ~40, pending: ~30, solved: ~20, closed: ~10
@@ -199,7 +211,7 @@ def seed_data(db_path: Path = DEFAULT_DB_PATH) -> None:
         elif i % 10 == 0 and status in ("open", "pending"):
             agent_id = None
         else:
-            agent_id = agent_ids[i % len(agent_ids)]
+            agent_id = client_agents[client_id][i % 2]  # only an agent linked to this client
 
         sla = SLA_HOURS[priority]
 

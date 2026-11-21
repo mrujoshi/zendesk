@@ -16,7 +16,8 @@ Run the backend: `.venv/bin/uvicorn main:app --reload`, then open http://127.0.0
 | `get_client(id)` / `get_agent(id)` | dict or None (agent has `role`, `is_active`) |
 | `email_exists(kind, email)` | bool (`kind` = "client" / "agent") |
 | `list_agents()` / `list_clients()` | list of dicts |
-| `active_agent_ids()` | ids of active agents with role 'agent' (round-robin pool) |
+| `active_agent_ids(client_id=None)` | active agents with role 'agent'; with client_id only those linked to it |
+| `linked_client_ids(agent_id)` / `linked_agents(client_id)` / `set_agent_clients(agent_id, ids)` / `existing_client_ids(ids)` | agent ↔ client access (`agent_clients` table) |
 | `admin_id()` | id of an active admin, or None |
 | `get_last_assigned()` / `set_last_assigned(id)` | settings table, key `last_assigned_agent_id` |
 | `create_ticket(client_id, title, description, priority, due_at)` | ticket dict |
@@ -29,6 +30,7 @@ Run the backend: `.venv/bin/uvicorn main:app --reload`, then open http://127.0.0
 | `audit(ticket_id, actor_type, actor_id, action, old_value, new_value)` | insert only |
 | `get_audit(ticket_id)` | list, oldest first |
 | `overdue_tickets(now_iso)` | open/pending, not escalated, `due_at < now_iso` |
+| `update_priority(id, priority, due_at)` | sets priority + new SLA deadline |
 | `escalate(id, new_priority)` | sets priority, `is_escalated = 1` |
 | `daily_report(day)` | `{date, created, solved, open, escalated, open_per_agent}` |
 
@@ -47,11 +49,15 @@ Demo (password `password123`): asha@demo.com (admin), priya@demo.com (agent) →
 | POST | `/api/auth/login`, `/api/auth/logout`; GET `/api/auth/me` | anyone / logged in |
 | POST | `/api/clients` | anyone |
 | POST | `/api/agents` | admin |
-| GET | `/api/agents`, `/api/clients` | staff |
+| GET | `/api/agents`, `/api/clients` | staff (agents get only their linked clients) |
+| GET | `/api/agents/{id}/clients` | admin, or that agent → `{agent_id, client_ids}` |
+| PUT | `/api/agents/{id}/clients` `{client_ids: [..]}` | admin; replaces the agent's full list |
+| GET | `/api/clients/{id}/agents` | staff → agents linked to that client (use for the reassign dropdown) |
 | POST | `/api/tickets` `{title, description, priority}` | client |
 | GET | `/api/tickets?status=&priority=&escalated=&agent_id=&limit=&offset=` | all (client sees own only) |
 | GET | `/api/tickets/{id}` (includes `messages`) | all |
 | PATCH | `/api/tickets/{id}/status` `{status}` | staff |
+| PATCH | `/api/tickets/{id}/priority` `{priority}` | staff (open/pending tickets only; SLA deadline recalculated from creation; audit action `priority`) |
 | POST | `/api/tickets/{id}/assign` `{agent_id}` | staff |
 | POST | `/api/tickets/{id}/messages` `{text, visibility}` | all (internal = staff only) |
 | GET | `/api/tickets/{id}/audit` | staff |

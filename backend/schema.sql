@@ -137,6 +137,18 @@ CREATE TABLE IF NOT EXISTS sessions (
     revoked_at  TIMESTAMP                  -- set on logout; NULL = active
 );
 
+-- 11. Agent <-> Client access (many-to-many, configured by admins)
+-- An agent (role 'agent') sees and works only on tickets of clients linked here.
+-- Admins are not limited. A client with no linked agents: tickets stay unassigned for the admin.
+CREATE TABLE IF NOT EXISTS agent_clients (
+    agent_id    INTEGER NOT NULL,
+    client_id   INTEGER NOT NULL,
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (agent_id, client_id),
+    FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE,
+    FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
+);
+
 -- Indexes for high performance
 CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status);
 CREATE INDEX IF NOT EXISTS idx_tickets_agent ON tickets(agent_id);
@@ -148,3 +160,4 @@ CREATE INDEX IF NOT EXISTS idx_worksheet_agent ON worksheet(agent_id);
 CREATE INDEX IF NOT EXISTS idx_audit_ticket ON audit(ticket_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_type, user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_lookup ON sessions(token_hash, revoked_at, expires_at);
+CREATE INDEX IF NOT EXISTS idx_agent_clients_client ON agent_clients(client_id);

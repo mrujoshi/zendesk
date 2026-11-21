@@ -91,6 +91,7 @@ In `/docs`: call login, copy the token, then fill the `authorization` field on e
 | GET | `/api/tickets?status=&priority=&escalated=&agent_id=&limit=&offset=` | all | List + filters (clients see only their own) |
 | GET | `/api/tickets/{id}` | all | Detail with message thread |
 | PATCH | `/api/tickets/{id}/status` | staff | Change status (validated) |
+| PATCH | `/api/tickets/{id}/priority` | staff | Change priority; SLA deadline recalculated from creation time |
 | POST | `/api/tickets/{id}/assign` | staff | Manual reassign |
 | POST | `/api/tickets/{id}/messages` | all | Add message (internal = staff only) |
 | GET | `/api/tickets/{id}/messages` | all | Thread, oldest first |
@@ -142,6 +143,24 @@ Messages are `public` or `internal`. Clients never see internal notes and cannot
 
 ### Privacy
 A client asking for someone else's ticket gets **404**, not 403, so the API doesn't reveal that the ticket exists.
+
+## Agent ↔ client access
+- Table `agent_clients` (many-to-many): an agent can serve many clients, a client can have many agents.
+- **Agents** see and act only on tickets of their linked clients; anything else is **404** (list, detail, reply, status, priority, assign, audit). **Admins** see everything.
+- **Round-robin** picks the next active agent *linked to that ticket's client*. **No linked agent → ticket stays unassigned** for the admin (option A).
+- **Reassign** only to a linked agent (else 400 `agent_not_linked`). Escalation still moves tickets to the admin.
+- **Configure (admin only):** `PUT /api/agents/{id}/clients {"client_ids": [1, 2]}` replaces the list. Takes effect on the agent's next request (checked every call, not stored in the token).
+- Seed: every client has 2 agents, every agent 2–3 clients (e.g. Acme → Priya + Monali).
+
+## Priority changes
+- Staff can change priority on **open or pending** tickets (`PATCH /api/tickets/{id}/priority`).
+- The SLA deadline is recalculated from the ticket's **creation time** (like Zendesk SLA policies), not from now.
+  Raising an old ticket to urgent can make it overdue at once; the escalation job then escalates it.
+- Same priority → 400 `no_change`; solved/closed → 400 `ticket_not_active`; every change is in the audit trail (`priority low → high`).
+
+## Input cleaning
+Titles, descriptions, messages and names are trimmed; whitespace-only values are rejected with 422.
+Messages and descriptions are capped at 10,000 characters. Passwords are never trimmed.
 
 ## Errors
 
