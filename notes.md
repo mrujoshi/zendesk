@@ -116,6 +116,30 @@
    * `value` (TEXT, NOT NULL)
    * *Used for:* `last_assigned_agent_id` for round-robin pointer persistence across server restarts.
 
+11. **Sessions** (Login tokens for clients and agents)
+   * `id` (INTEGER, PK, AUTOINCREMENT)
+   * `token_hash` (TEXT, UNIQUE, NOT NULL - SHA-256 of the token; the raw token is never stored)
+   * `user_type` (TEXT: `'client'`, `'agent'`, NOT NULL - which table `user_id` points to)
+   * `user_id` (INTEGER, NOT NULL - `clients.id` or `agents.id`; no FK because it can point to either table)
+   * `created_at` (TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
+   * `expires_at` (TIMESTAMP, NOT NULL - login time + 8 hours)
+   * `revoked_at` (TIMESTAMP, NULLABLE - set on logout; NULL means still valid)
+   * *Index:* `idx_sessions_user ON sessions(user_type, user_id)`
+   * *Flow:* `POST /api/auth/login` checks the password hash and creates a session, returning the raw token once. Every request sends `Authorization: Bearer <token>`; the API hashes it and looks up a session that is not revoked and not expired (agents must also have `is_active = 1`), otherwise `401`. `POST /api/auth/logout` sets `revoked_at`.
+   * *SQL:*
+     ```sql
+     CREATE TABLE IF NOT EXISTS sessions (
+         id          INTEGER PRIMARY KEY AUTOINCREMENT,
+         token_hash  TEXT NOT NULL UNIQUE,
+         user_type   TEXT NOT NULL CHECK (user_type IN ('client', 'agent')),
+         user_id     INTEGER NOT NULL,
+         created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+         expires_at  TIMESTAMP NOT NULL,
+         revoked_at  TIMESTAMP
+     );
+     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_type, user_id);
+     ```
+
 ---
 
 ## Functional Requirements
